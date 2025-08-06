@@ -1,8 +1,9 @@
 /*
- * winautohide v1.03 modified.
+ * winautohide v1.05 modified.
  * 新增功能：
  * 1. 必须按住Ctrl键时鼠标移上去窗口才会出现，单纯鼠标移上去不显示，防止误触
  * 2. 新增右键菜单开关，可启用/禁用Ctrl键要求，状态会保存
+ * 3. 底部隐藏窗口使用区域检测，解决任务栏遮挡问题
  *
  * This program and its source are in the public domain.
  * Contact BoD@JRAF.org for more information.
@@ -12,7 +13,8 @@
  * 2024-03-01: v1.01: Modded by hzhbest
  * 2024-03-20: v1.02: moving shown autohide window will cancel autohide status
  * 2024-12-10: v1.03: keep showing autohide window when mouse within window area
- * Modified: 添加Ctrl键检查和开关功能
+ * 2024-12-XX: v1.04: added Ctrl key requirement toggle, Chinese UI localization
+ * 2025-08-06: v1.05: implemented area detection for bottom-hidden windows
  */
 CoordMode, Mouse, Screen		;MouseGetPos relative to Screen
 #SingleInstance ignore
@@ -65,7 +67,7 @@ return ; end of code that is to be executed on script start-up
  * Tray menu implementation.
  */
 menuAbout:
-    MsgBox, 8256, 关于, BoD winautohide v1.04 修改版`n原作者：BoD (BoD@JRAF.org)`n修改者：hzhbest, MTpupil`n项目地址：https://github.com/MTpupil/winautohide`n`n本程序及其源代码为公共领域。`n如需更多信息请联系原作者 BoD@JRAF.org`n`n修改内容：`n1. 必须按住Ctrl键时鼠标移上去窗口才会出现`n2. 可通过菜单设置是否需要按住Ctrl才显示窗口`n3. 移动显示的自动隐藏窗口将取消自动隐藏状态`n4. 鼠标在窗口区域内时保持显示自动隐藏窗口`n5. 界面中文化优化
+    MsgBox, 8256, 关于, BoD winautohide v1.05 修改版`n原作者：BoD (BoD@JRAF.org)`n修改者：hzhbest, MTpupil`n项目地址：https://github.com/MTpupil/winautohide`n`n本程序及其源代码为公共领域。`n如需更多信息请联系原作者 BoD@JRAF.org`n`n修改内容：`n1. 必须按住Ctrl键时鼠标移上去窗口才会出现`n2. 可通过菜单设置是否需要按住Ctrl才显示窗口`n3. 移动显示的自动隐藏窗口将取消自动隐藏状态`n4. 鼠标在窗口区域内时保持显示自动隐藏窗口`n5. 界面中文化优化`n6. 底部隐藏窗口使用区域检测，解决任务栏遮挡问题
 return
 
 menuToggleCtrl: ; 切换Ctrl键要求的开关
@@ -106,13 +108,35 @@ watchCursor:
     ; 检查Ctrl键是否被按住
     CtrlDown := GetKeyState("Ctrl", "P")
     
-    ; 根据开关状态决定是否需要Ctrl键
+    ; 首先检查是否有隐藏窗口需要通过区域检测显示（主要针对底部隐藏）
+    Loop, Parse, autohideWindows, `,
+    {
+        checkWinId := A_LoopField
+        if (hidden_%checkWinId% && hideArea_%checkWinId%_active) {
+            ; 检查鼠标是否在隐藏区域内
+            if (mouseX >= hideArea_%checkWinId%_left && mouseX <= hideArea_%checkWinId%_right 
+                && mouseY >= hideArea_%checkWinId%_top && mouseY <= hideArea_%checkWinId%_bottom) {
+                ; 检查Ctrl键要求
+                if ((requireCtrl && CtrlDown) || !requireCtrl) {
+                    ; 显示隐藏的窗口
+                    previousActiveWindow := WinExist("A")
+                    WinActivate, ahk_id %checkWinId%
+                    WinMove, ahk_id %checkWinId%, , showing_%checkWinId%_x, showing_%checkWinId%_y
+                    hidden_%checkWinId% := false
+                    needHide := checkWinId
+                    break ; 找到一个就退出循环
+                }
+            }
+        }
+    }
+    
+    ; 原有的窗口检测逻辑（用于非底部隐藏的窗口）
     if (autohide_%winId% || autohide_%winPid%) {
         ; 如果启用了Ctrl要求，则需要Ctrl+鼠标在窗口上才显示
         ; 如果未启用Ctrl要求，则只需要鼠标在窗口上就显示
         if ((requireCtrl && CtrlDown) || !requireCtrl) {
             WinGetPos %winId%_X, %winId%_Y, %winId%_W, %winId%_H, ahk_id %winId%
-            if (hidden_%winId%) { ; window is in 'hidden' position
+            if (hidden_%winId% && !hideArea_%winId%_active) { ; 只处理非区域检测的隐藏窗口
                 previousActiveWindow := WinExist("A")
                 WinActivate, ahk_id %winId% ; activate the window
                 WinMove, ahk_id %winId%, , showing_%winId%_x, showing_%winId%_y
@@ -197,6 +221,7 @@ toggleWindow:
             prehid_%curWinId%_y := orig_%curWinId%_y
             hidden_%curWinId%_x := A_ScreenWidth - 1
             hidden_%curWinId%_y := orig_%curWinId%_y
+            hideArea_%curWinId%_active := false  ; 右侧隐藏不使用区域检测
         } else if (mode = "left") {
             showing_%curWinId%_x := 0
             showing_%curWinId%_y := orig_%curWinId%_y
@@ -204,6 +229,7 @@ toggleWindow:
             prehid_%curWinId%_y := orig_%curWinId%_y
             hidden_%curWinId%_x := -width + 1
             hidden_%curWinId%_y := orig_%curWinId%_y
+            hideArea_%curWinId%_active := false  ; 左侧隐藏不使用区域检测
         } else if (mode = "up") {
             showing_%curWinId%_x := orig_%curWinId%_x
             showing_%curWinId%_y := 0
@@ -211,13 +237,21 @@ toggleWindow:
             prehid_%curWinId%_y := -height + 51
             hidden_%curWinId%_x := orig_%curWinId%_x
             hidden_%curWinId%_y := -height + 1
-        } else { ; down
+            hideArea_%curWinId%_active := false  ; 顶部隐藏不使用区域检测
+        } else { ; down - 底部隐藏，使用区域检测方式
             showing_%curWinId%_x := orig_%curWinId%_x
-            showing_%curWinId%_y := A_ScreenHeight - height
+            showing_%curWinId%_y := A_ScreenHeight - height  ; 显示位置在屏幕底部
             prehid_%curWinId%_x := orig_%curWinId%_x
-            prehid_%curWinId%_y := A_ScreenHeight - 51
+            prehid_%curWinId%_y := A_ScreenHeight - 51  ; 预隐藏位置
             hidden_%curWinId%_x := orig_%curWinId%_x
-            hidden_%curWinId%_y := A_ScreenHeight - 1
+            hidden_%curWinId%_y := A_ScreenHeight - 1   ; 隐藏位置在屏幕底部1像素
+            
+            ; 设置底部隐藏区域检测坐标（鼠标检测区域）
+            hideArea_%curWinId%_left := orig_%curWinId%_x
+            hideArea_%curWinId%_right := orig_%curWinId%_x + width
+            hideArea_%curWinId%_top := A_ScreenHeight - 5  ; 底部5像素区域用于检测
+            hideArea_%curWinId%_bottom := A_ScreenHeight
+            hideArea_%curWinId%_active := true  ; 启用区域检测
         }
 
         WinMove, ahk_id %curWinId%, , prehid_%curWinId%_x, prehid_%curWinId%_y
@@ -232,6 +266,7 @@ unautohide:
     autohide_%curWinId% := false
     autohide_%curWinPid% := false
     needHide := false
+    hideArea_%curWinId%_active := false  ; 清除区域检测设置
     Gosub, unworkWindow
     WinMove, ahk_id %curWinId%, , orig_%curWinId%_x, orig_%curWinId%_y ; go back to original position
     hidden_%curWinId% := false
@@ -242,6 +277,8 @@ workWindow:
     WinSet, AlwaysOnTop, on, ahk_id %curWinId% ; always-on-top
     WinSet, Style, -0x40000, ahk_id %curWinId% ; disable resizing
     WinSet, ExStyle, +0x80, ahk_id %curWinId% ; remove from task bar
+    ; 设置窗口为最顶层，确保能够显示在任务栏上方
+    DllCall("SetWindowPos", "ptr", curWinId, "ptr", -1, "int", 0, "int", 0, "int", 0, "int", 0, "uint", 0x0013)
 return
 
 unworkWindow:
@@ -249,4 +286,6 @@ unworkWindow:
     WinSet, AlwaysOnTop, off, ahk_id %curWinId% ; always-on-top
     WinSet, Style, +0x40000, ahk_id %curWinId% ; enable resizing
     WinSet, ExStyle, -0x80, ahk_id %curWinId% ; remove from task bar
+    ; 恢复正常窗口层级
+    DllCall("SetWindowPos", "ptr", curWinId, "ptr", 0, "int", 0, "int", 0, "int", 0, "int", 0, "uint", 0x0013)
 return

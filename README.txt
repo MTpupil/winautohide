@@ -35,3 +35,4 @@ Version history:
 2024-03-20: v1.02 Modded by hzhbest: added mechanism that by dragging showing autohide window away you can instantly unhide that window; for that purpose, title style of autohide window changed.
 2024-12-10: v1.03 Modded by hzhbest: keep showing autohide window when mouse within window area to avoid accidental hiding when using input method.
 2024-12-XX: v1.04 Modded by MTpupil: added Ctrl key requirement toggle, Chinese UI localization, improved user experience.
+2025-08-06: v1.05 Modded by MTpupil: implemented area detection for bottom-hidden windows to solve taskbar occlusion issue.
