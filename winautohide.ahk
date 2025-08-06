@@ -1,9 +1,11 @@
 /*
- * winautohide v1.05 modified.
+ * winautohide v1.06 modified.
  * 新增功能：
  * 1. 必须按住Ctrl键时鼠标移上去窗口才会出现，单纯鼠标移上去不显示，防止误触
  * 2. 新增右键菜单开关，可启用/禁用Ctrl键要求，状态会保存
  * 3. 底部隐藏窗口使用区域检测，解决任务栏遮挡问题
+ * 4. 修复窗口移动后仍自动隐藏的问题
+ * 5. 修复取消自动隐藏时任务栏变成白色长条的问题
  *
  * This program and its source are in the public domain.
  * Contact BoD@JRAF.org for more information.
@@ -13,8 +15,9 @@
  * 2024-03-01: v1.01: Modded by hzhbest
  * 2024-03-20: v1.02: moving shown autohide window will cancel autohide status
  * 2024-12-10: v1.03: keep showing autohide window when mouse within window area
- * 2024-12-XX: v1.04: added Ctrl key requirement toggle, Chinese UI localization
+ * 2025-08-06: v1.04: added Ctrl key requirement toggle, Chinese UI localization
  * 2025-08-06: v1.05: implemented area detection for bottom-hidden windows
+ * 2025-08-06: v1.06: fixed window movement detection and taskbar issues
  */
 CoordMode, Mouse, Screen		;MouseGetPos relative to Screen
 #SingleInstance ignore
@@ -86,6 +89,8 @@ menuUnautohideAll:
     {
         curWinId := A_LoopField
         if (autohide_%curWinId%) {
+            ; 获取窗口的PID，确保完整的取消隐藏操作
+            WinGet curWinPid, PID, ahk_id %curWinId%
             Gosub, unautohide
         }
     }
@@ -120,8 +125,10 @@ watchCursor:
                 if ((requireCtrl && CtrlDown) || !requireCtrl) {
                     ; 显示隐藏的窗口
                     previousActiveWindow := WinExist("A")
-                    WinActivate, ahk_id %checkWinId%
                     WinMove, ahk_id %checkWinId%, , showing_%checkWinId%_x, showing_%checkWinId%_y
+                    WinActivate, ahk_id %checkWinId% ; 移动后再激活，避免位置变化
+                    ; 更新窗口位置变量，确保移动检测的准确性
+                    WinGetPos %checkWinId%_X, %checkWinId%_Y, %checkWinId%_W, %checkWinId%_H, ahk_id %checkWinId%
                     hidden_%checkWinId% := false
                     needHide := checkWinId
                     break ; 找到一个就退出循环
@@ -149,17 +156,26 @@ watchCursor:
         }
     } else {
         if (needHide) {
-            WinGetPos, _X, _Y, _W, _H, ahk_id %needHide%	; update the "needHide" win pos
-            If (showing_%needHide%_x !== %needHide%_X || showing_%needHide%_y !== %needHide%_Y) {
-            ; if win moved after showing then cancel autohide status
+            WinGetPos, %needHide%_X, %needHide%_Y, %needHide%_W, %needHide%_H, ahk_id %needHide%	; update the "needHide" win pos
+            ; 检测窗口是否被移动，如果移动了就完全取消自动隐藏状态
+            ; 使用数值比较而不是字符串比较，避免类型问题
+            showingX := showing_%needHide%_x
+            showingY := showing_%needHide%_y
+            currentX := %needHide%_X
+            currentY := %needHide%_Y
+            If (showingX != currentX || showingY != currentY) {
+            ; if win moved after showing then cancel autohide status completely
                 curWinId := needHide
                 WinGet winPhid, PID, ahk_id %needHide%
                 curWinPId := winPhid
                 autohide_%curWinId% := false
                 autohide_%curWinPid% := false
                 needHide := false
+                hideArea_%curWinId%_active := false  ; 清除区域检测设置
                 Gosub, unworkWindow
                 hidden_%curWinId% := false
+                ; 窗口移动后完全取消自动隐藏，直接返回不再执行后续逻辑
+                return
             } else if (mouseX < %needHide%_X || mouseX > %needHide%_X+%needHide%_W || mouseY < %needHide%_Y || mouseY > %needHide%_Y+%needHide%_H) {
             ;if mouse leave the "needHide" win then
                 WinMove, ahk_id %needHide%, , hidden_%needHide%_x, hidden_%needHide%_y
@@ -270,10 +286,20 @@ unautohide:
     Gosub, unworkWindow
     WinMove, ahk_id %curWinId%, , orig_%curWinId%_x, orig_%curWinId%_y ; go back to original position
     hidden_%curWinId% := false
+    ; 清除所有相关变量
+    originalExStyle_%curWinId% := ""
 return
 
 workWindow:
     DetectHiddenWindows, On
+    ; 检查窗口是否有效，避免对系统窗口进行操作
+    WinGetClass, winClass, ahk_id %curWinId%
+    if (winClass = "Shell_TrayWnd" || winClass = "DV2ControlHost") {
+        ; 跳过任务栏和系统窗口
+        return
+    }
+    ; 保存原始ExStyle以便恢复
+    WinGet, originalExStyle_%curWinId%, ExStyle, ahk_id %curWinId%
     WinSet, AlwaysOnTop, on, ahk_id %curWinId% ; always-on-top
     WinSet, Style, -0x40000, ahk_id %curWinId% ; disable resizing
     WinSet, ExStyle, +0x80, ahk_id %curWinId% ; remove from task bar
@@ -283,9 +309,25 @@ return
 
 unworkWindow:
     DetectHiddenWindows, On
+    ; 检查窗口是否有效，避免对系统窗口进行操作
+    WinGetClass, winClass, ahk_id %curWinId%
+    if (winClass = "Shell_TrayWnd" || winClass = "DV2ControlHost") {
+        ; 跳过任务栏和系统窗口
+        return
+    }
     WinSet, AlwaysOnTop, off, ahk_id %curWinId% ; always-on-top
     WinSet, Style, +0x40000, ahk_id %curWinId% ; enable resizing
-    WinSet, ExStyle, -0x80, ahk_id %curWinId% ; remove from task bar
+    ; 恢复原始ExStyle，避免对任务栏造成影响
+    savedExStyle := originalExStyle_%curWinId%
+    if (savedExStyle != "") {
+        WinSet, ExStyle, %savedExStyle%, ahk_id %curWinId%
+        originalExStyle_%curWinId% := "" ; 清除保存的值
+    } else {
+        ; 备用方案：只移除我们添加的标志，不影响其他属性
+        WinGet, currentExStyle, ExStyle, ahk_id %curWinId%
+        newExStyle := currentExStyle & ~0x80  ; 移除 WS_EX_TOOLWINDOW 标志
+        WinSet, ExStyle, %newExStyle%, ahk_id %curWinId%
+    }
     ; 恢复正常窗口层级
     DllCall("SetWindowPos", "ptr", curWinId, "ptr", 0, "int", 0, "int", 0, "int", 0, "int", 0, "uint", 0x0013)
 return
