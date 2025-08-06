@@ -65,7 +65,7 @@ return ; end of code that is to be executed on script start-up
  * Tray menu implementation.
  */
 menuAbout:
-    MsgBox, 8256, 关于, BoD winautohide v1.03 修改版`n原作者：BoD (BoD@JRAF.org)`n修改者：hzhbest, MTpupil`n项目地址：https://github.com/MTpupil/winautohide`n`n本程序及其源代码为公共领域。`n如需更多信息请联系原作者 BoD@JRAF.org`n`n修改内容：`n1. 必须按住Ctrl键时鼠标移上去窗口才会出现`n2. 可通过菜单设置是否需要按住Ctrl才显示窗口`n3. 移动显示的自动隐藏窗口将取消自动隐藏状态`n4. 鼠标在窗口区域内时保持显示自动隐藏窗口`n5. 界面中文化优化
+    MsgBox, 8256, 关于, BoD winautohide v1.04 修改版`n原作者：BoD (BoD@JRAF.org)`n修改者：hzhbest, MTpupil`n项目地址：https://github.com/MTpupil/winautohide`n`n本程序及其源代码为公共领域。`n如需更多信息请联系原作者 BoD@JRAF.org`n`n修改内容：`n1. 必须按住Ctrl键时鼠标移上去窗口才会出现`n2. 可通过菜单设置是否需要按住Ctrl才显示窗口`n3. 移动显示的自动隐藏窗口将取消自动隐藏状态`n4. 鼠标在窗口区域内时保持显示自动隐藏窗口`n5. 界面中文化优化
 return
 
 menuToggleCtrl: ; 切换Ctrl键要求的开关
