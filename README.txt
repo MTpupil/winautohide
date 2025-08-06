@@ -1,13 +1,18 @@
-//中文版说明：https://github.com/hzhbest/winautohide/blob/master/README_cn.txt
-This is a tiny utility that utilizes 4 shortcut keys (Win+Left, Win+Right, Win+Up, Win+Down) to hide windows to screen sides.
+//中文版说明：https://github.com/MTpupil/winautohide/blob/master/README_cn.txt
+This is a tiny utility that utilizes 4 shortcut keys (Ctrl+Left, Ctrl+Right, Ctrl+Up, Ctrl+Down) to hide windows to screen sides.
  
 This utility can be useful if you have a few small windows that you use often (for example a terminal or a command prompt) and you want to access them quickly just by moving the mouse.
 
-When you press one of the shortcuts (say Windows+Right for example), the active window will "hide" to the edge of screen assigned by the arrow key in the shortcut (right edge as in example), showing only one pixel of its border. It will also stay "always on top" so you can always "touch" this one pixel border with your cursor, then you can make the window appear and take the focus for you to use it. When you move your mouse away from the window, it will hide again.
+When you press one of the shortcuts (say Ctrl+Right for example), the active window will "hide" to the edge of screen assigned by the arrow key in the shortcut (right edge as in example), showing only one pixel of its border. It will also stay "always on top" so you can always "touch" this one pixel border with your cursor, then you can make the window appear and take the focus for you to use it. When you move your mouse away from the window, it will hide again.
+
+New Feature: By default, you need to hold Ctrl key while moving mouse to the hidden window edge to make it appear. This prevents accidental window showing. You can toggle this requirement through the right-click menu.
 
 In effect the window will act like the Windows taskbar when the "auto-hide" setting is checked, or other similar bars.
 
-This utility also adds an icon in the notification area of the Windows taskbar, which you can click with right mouse button to show a menu with a command to un-autohide all hidden windows.
+This utility also adds an icon in the notification area of the Windows taskbar, which you can click with right mouse button to show a menu with commands to:
+- Toggle Ctrl key requirement for showing hidden windows
+- Un-autohide all hidden windows
+- View about information
 
 Tested under Windows10.
 
@@ -18,7 +23,9 @@ Limitations:
 Note: this is an AutoHotkey script, install AutoHotkey before running "winautohide.ahk"
    (see http://www.autohotkey.com/).
 
-Original author: BoD@JRAF.org.
+Original author: BoD@JRAF.org
+Modified by: hzhbest, MTpupil
+Project URL: https://github.com/MTpupil/winautohide
 
 This program and its source are in the public domain.
 
@@ -27,3 +34,4 @@ Version history:
 2024-03-01: v1.01 Modded by hzhbest: improved mechanism that keep showing autohide window when menu from that window is shown; and pre-hidden movement to the window being hidden by a shortcut so that you see where it will hide.
 2024-03-20: v1.02 Modded by hzhbest: added mechanism that by dragging showing autohide window away you can instantly unhide that window; for that purpose, title style of autohide window changed.
 2024-12-10: v1.03 Modded by hzhbest: keep showing autohide window when mouse within window area to avoid accidental hiding when using input method.
+2024-12-XX: v1.04 Modded by MTpupil: added Ctrl key requirement toggle, Chinese UI localization, improved user experience.
