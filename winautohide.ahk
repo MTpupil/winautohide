@@ -1,5 +1,5 @@
 /*
- * winautohide v1.07 modified.
+ * winautohide v1.08 modified.
  * 新增功能：
  * 1. 必须按住Ctrl键时鼠标移上去窗口才会出现，单纯鼠标移上去不显示，防止误触
  * 2. 新增右键菜单开关，可启用/禁用Ctrl键要求，状态会保存
@@ -7,6 +7,7 @@
  * 4. 修复窗口移动后仍自动隐藏的问题
  * 5. 修复取消自动隐藏时任务栏变成白色长条的问题
  * 6. 修复浏览器和命令行窗口隐藏时出现黑边/白边的问题
+ * 7. 新增图形化设置界面，双击托盘图标打开设置，包含关于信息和保存成功提醒
  *
  * This program and its source are in the public domain.
  * Contact BoD@JRAF.org for more information.
@@ -19,18 +20,21 @@
  * 2025-08-06: v1.04: added Ctrl key requirement toggle, Chinese UI localization
  * 2025-08-06: v1.05: implemented area detection for bottom-hidden windows
  * 2025-08-06: v1.06: fixed window movement detection and taskbar issues
- * 2025-08-06: v1.07: fixed browser and console window border rendering issues
+ * 2025-08-07: v1.07: fixed browser and console window border rendering issues
+ * 2025-08-07: v1.08: added graphical settings interface with about info and save notifications
  */
 CoordMode, Mouse, Screen		;MouseGetPos relative to Screen
 #SingleInstance ignore
 Menu tray, Icon, %A_ScriptDir%\winautohide.ico
 
-; 初始化配置 - 加载Ctrl键要求的设置
+; 初始化配置 - 加载设置
 configFile := A_ScriptDir "\winautohide.ini"
 If (FileExist(configFile)) {
     IniRead, requireCtrl, %configFile%, Settings, RequireCtrl, 1 ; 默认启用
+    IniRead, showTrayDetails, %configFile%, Settings, ShowTrayDetails, 1 ; 默认显示详细信息
 } else {
     requireCtrl := 1 ; 默认启用Ctrl要求
+    showTrayDetails := 1 ; 默认显示详细信息
 }
 
 /*
@@ -51,11 +55,11 @@ SetTimer, watchCursor, 300
  * Tray menu initialization.
  */
 Menu, tray, NoStandard
-Menu, tray, Add, 关于..., menuAbout
+Menu, tray, Add, 设置..., menuSettings ; 新增设置选项
 Menu, tray, Add, 需要按Ctrl键显示, menuToggleCtrl ; 新增开关选项
 Menu, tray, Add, 取消所有窗口自动隐藏, menuUnautohideAll
 Menu, tray, Add, 退出, menuExit
-Menu, tray, Default, 关于...
+Menu, tray, Default, 设置... ; 设置为默认双击动作
 
 ; 根据配置设置菜单勾选状态
 If (requireCtrl = 1) {
@@ -64,15 +68,75 @@ If (requireCtrl = 1) {
     Menu, tray, Uncheck, 需要按Ctrl键显示
 }
 
+; 初始化托盘图标提示
+Gosub, updateTrayTooltip
+
 
 return ; end of code that is to be executed on script start-up
 
 
 /*
+ * 更新托盘图标提示信息
+ */
+updateTrayTooltip:
+    ; 根据设置决定显示简单还是详细的提示信息
+    if (showTrayDetails) {
+        ; 详细模式：显示隐藏窗口数量和列表
+        ; 计算当前隐藏的窗口数量
+        hiddenCount := 0
+        hiddenWindowsList := ""
+        
+        ; 遍历所有自动隐藏窗口，统计隐藏状态的窗口
+        Loop, Parse, autohideWindows, `,
+        {
+            curWinId := A_LoopField
+            if (curWinId != "" && autohide_%curWinId% && hidden_%curWinId%) {
+                hiddenCount++
+                ; 获取窗口标题用于显示
+                WinGetTitle, winTitle, ahk_id %curWinId%
+                if (winTitle = "") {
+                    winTitle := "未命名窗口"
+                }
+                ; 限制标题长度，避免提示过长
+                if (StrLen(winTitle) > 30) {
+                    winTitle := SubStr(winTitle, 1, 27) . "..."
+                }
+                if (hiddenWindowsList != "") {
+                    hiddenWindowsList .= "`n"
+                }
+                hiddenWindowsList .= "• " . winTitle
+            }
+        }
+        
+        ; 构建详细提示文本
+        tooltipText := "WinAutoHide v1.08`n"
+        tooltipText .= "已隐藏窗口数量: " . hiddenCount
+        
+        if (hiddenCount > 0) {
+            tooltipText .= "`n`n隐藏的窗口:`n" . hiddenWindowsList
+        }
+        
+        if (requireCtrl) {
+            tooltipText .= "`n`n需要按住Ctrl键显示隐藏窗口"
+        } else {
+            tooltipText .= "`n`n鼠标移动到边缘即可显示隐藏窗口"
+        }
+    } else {
+        ; 简单模式：只显示程序名称
+        tooltipText := "WinAutoHide v1.08"
+    }
+    
+    ; 更新托盘图标提示
+    Menu, tray, Tip, %tooltipText%
+return
+
+
+/*
  * Tray menu implementation.
  */
-menuAbout:
-    MsgBox, 8256, 关于, BoD winautohide v1.05 修改版`n原作者：BoD (BoD@JRAF.org)`n修改者：hzhbest, MTpupil`n项目地址：https://github.com/MTpupil/winautohide`n`n本程序及其源代码为公共领域。`n如需更多信息请联系原作者 BoD@JRAF.org`n`n修改内容：`n1. 必须按住Ctrl键时鼠标移上去窗口才会出现`n2. 可通过菜单设置是否需要按住Ctrl才显示窗口`n3. 移动显示的自动隐藏窗口将取消自动隐藏状态`n4. 鼠标在窗口区域内时保持显示自动隐藏窗口`n5. 界面中文化优化`n6. 底部隐藏窗口使用区域检测，解决任务栏遮挡问题
+menuSettings:
+    ; 创建设置界面
+    Gosub, createSettingsGUI
 return
 
 menuToggleCtrl: ; 切换Ctrl键要求的开关
@@ -84,6 +148,8 @@ menuToggleCtrl: ; 切换Ctrl键要求的开关
     }
     ; 保存设置到配置文件
     IniWrite, %requireCtrl%, %configFile%, Settings, RequireCtrl
+    ; 更新托盘提示信息
+    Gosub, updateTrayTooltip
 return
 
 menuUnautohideAll:
@@ -96,6 +162,8 @@ menuUnautohideAll:
             Gosub, unautohide
         }
     }
+    ; 更新托盘提示信息
+    Gosub, updateTrayTooltip
 return
 
 menuExit:
@@ -176,6 +244,8 @@ watchCursor:
                 hideArea_%curWinId%_active := false  ; 清除区域检测设置
                 Gosub, unworkWindow
                 hidden_%curWinId% := false
+                ; 更新托盘提示信息
+                Gosub, updateTrayTooltip
                 ; 窗口移动后完全取消自动隐藏，直接返回不再执行后续逻辑
                 return
             } else if (mouseX < %needHide%_X || mouseX > %needHide%_X+%needHide%_W || mouseY < %needHide%_Y || mouseY > %needHide%_Y+%needHide%_H) {
@@ -276,6 +346,8 @@ toggleWindow:
         Sleep 300
         WinMove, ahk_id %curWinId%, , hidden_%curWinId%_x, hidden_%curWinId%_y ; hide the window
         hidden_%curWinId% := true
+        ; 更新托盘提示信息
+        Gosub, updateTrayTooltip
     }
 return
 
@@ -291,6 +363,8 @@ unautohide:
     ; 清除所有相关变量
     originalExStyle_%curWinId% := ""
     originalStyle_%curWinId% := ""
+    ; 更新托盘提示信息
+    Gosub, updateTrayTooltip
 return
 
 workWindow:
@@ -422,4 +496,120 @@ unworkWindow:
     if (isSensitiveWindow) {
         WinSet, Redraw,, ahk_id %curWinId%
     }
+return
+
+/*
+ * 设置界面实现
+ */
+createSettingsGUI:
+    ; 如果设置窗口已存在，则激活它
+    IfWinExist, WinAutoHide 设置
+    {
+        WinActivate, WinAutoHide 设置
+        return
+    }
+    
+    ; 创建设置界面
+    Gui, Settings:Add, Text, x20 y20 w300 h20, 基本设置：
+    Gui, Settings:Add, Checkbox, x40 y50 w250 h20 vCtrlRequired gUpdateCtrlSetting, 需要按住Ctrl键才能显示隐藏窗口
+    Gui, Settings:Add, Checkbox, x40 y80 w250 h20 vShowTrayDetails gUpdateTrayDetailsSetting, 托盘图标显示详细信息
+    
+    ; 添加分隔线
+    Gui, Settings:Add, Text, x20 y110 w300 h1 0x10 ; SS_ETCHEDHORZ
+    
+    ; 使用说明区域
+    Gui, Settings:Add, Text, x20 y130 w300 h20, 使用说明：
+    Gui, Settings:Add, Text, x40 y160 w280 h80, 使用快捷键 Ctrl+方向键 将当前窗口隐藏到屏幕边缘。`n隐藏后，将鼠标移动到屏幕边缘即可显示窗口。`n移动已显示的隐藏窗口将取消其自动隐藏状态。`n底部隐藏的窗口使用区域检测，避免任务栏遮挡。
+    
+    ; 按钮区域
+    Gui, Settings:Add, Button, x40 y260 w80 h30 gShowAbout, 关于
+    Gui, Settings:Add, Button, x140 y260 w80 h30 gSaveSettings, 保存设置
+    Gui, Settings:Add, Button, x240 y260 w80 h30 gCloseSettings, 关闭
+    
+    ; 设置复选框状态
+    GuiControl, Settings:, CtrlRequired, %requireCtrl%
+    GuiControl, Settings:, ShowTrayDetails, %showTrayDetails%
+    
+    ; 显示设置窗口
+    Gui, Settings:Show, w360 h310, WinAutoHide 设置
+return
+
+; 实时更新Ctrl设置
+UpdateCtrlSetting:
+    Gui, Settings:Submit, NoHide
+    requireCtrl := CtrlRequired
+    
+    ; 更新托盘菜单状态
+    If (requireCtrl = 1) {
+        Menu, tray, Check, 需要按Ctrl键显示
+    } else {
+        Menu, tray, Uncheck, 需要按Ctrl键显示
+    }
+    ; 更新托盘提示信息
+    Gosub, updateTrayTooltip
+return
+
+; 实时更新托盘详细信息设置
+UpdateTrayDetailsSetting:
+    Gui, Settings:Submit, NoHide
+    showTrayDetails := ShowTrayDetails
+    
+    ; 立即更新托盘提示信息
+    Gosub, updateTrayTooltip
+return
+
+; 显示关于信息
+ ShowAbout:
+     MsgBox, 8256, 关于 WinAutoHide, BoD winautohide v1.08 修改版`n`n原作者：BoD (BoD@JRAF.org)`n修改者：hzhbest, MTpupil`n项目地址：https://github.com/MTpupil/winautohide`n`n本程序及其源代码为公共领域。`n如需更多信息请联系原作者 BoD@JRAF.org
+ return
+ 
+ ; 保存设置
+ SaveSettings:
+      Gui, Settings:Submit, NoHide
+      requireCtrl := CtrlRequired
+      showTrayDetails := ShowTrayDetails
+      
+      ; 保存设置到配置文件
+      IniWrite, %requireCtrl%, %configFile%, Settings, RequireCtrl
+      IniWrite, %showTrayDetails%, %configFile%, Settings, ShowTrayDetails
+      
+      ; 更新托盘菜单状态
+      If (requireCtrl = 1) {
+          Menu, tray, Check, 需要按Ctrl键显示
+      } else {
+          Menu, tray, Uncheck, 需要按Ctrl键显示
+      }
+     
+     ; 显示保存成功提醒（自动消失的Toast通知）
+     ; 创建一个小的提示窗口
+     Gui, Toast:New, +AlwaysOnTop -MaximizeBox -MinimizeBox +LastFound, 
+     Gui, Toast:Color, 0xF0F0F0
+     Gui, Toast:Font, s10
+     Gui, Toast:Add, Text, x15 y10 w120 h25 Center, 设置保存成功！
+     
+     ; 获取屏幕尺寸并计算Toast位置（右下角）
+     WinGetPos,,, Width, Height, A
+     toastX := A_ScreenWidth - 160
+     toastY := A_ScreenHeight - 80
+     
+     ; 显示Toast通知
+     Gui, Toast:Show, x%toastX% y%toastY% w150 h45 NoActivate
+     
+     ; 设置3秒后自动关闭
+     SetTimer, CloseToast, 3000
+     
+     ; 更新托盘提示信息
+     Gosub, updateTrayTooltip
+ return
+
+; 关闭保存成功提醒
+ CloseToast:
+     SetTimer, CloseToast, Off
+     Gui, Toast:Destroy
+ return
+
+; 关闭设置窗口
+CloseSettings:
+SettingsGuiClose:
+    Gui, Settings:Destroy
 return
