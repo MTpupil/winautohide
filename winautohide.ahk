@@ -67,11 +67,11 @@ if (enableDragHide) {
  * Tray menu initialization.
  */
 Menu, tray, NoStandard
-Menu, tray, Add, 设置..., menuSettings ; 新增设置选项
-Menu, tray, Add, 需要按Ctrl键显示, menuToggleCtrl ; 新增开关选项
+Menu, tray, Add, 设置..., menuSettings
+Menu, tray, Add, 需要按Ctrl键显示, menuToggleCtrl
 Menu, tray, Add, 取消所有窗口自动隐藏, menuUnautohideAll
 Menu, tray, Add, 退出, menuExit
-Menu, tray, Default, 设置... ; 设置为默认双击动作
+Menu, tray, Default, 设置...
 
 ; 根据配置设置菜单勾选状态
 If (requireCtrl = 1) {
@@ -357,11 +357,11 @@ updateTrayTooltip:
         }
         
         ; 构建详细提示文本
-        tooltipText := "WinAutoHide v1.08`n"
-        tooltipText .= "已隐藏窗口数量: " . hiddenCount
+        tooltipText := "WinAutoHide v1.1`n"
+        tooltipText .= "已隐藏窗口: " . hiddenCount
         
         if (hiddenCount > 0) {
-            tooltipText .= "`n`n隐藏的窗口:`n" . hiddenWindowsList
+            tooltipText .= "`n`n隐藏的窗口列表:`n" . hiddenWindowsList
         }
         
         if (requireCtrl) {
@@ -371,9 +371,9 @@ updateTrayTooltip:
         }
         
         if (showIndicators) {
-            tooltipText .= "`n边缘指示器：已启用"
+            tooltipText .= "`n边缘指示器: 已启用"
         } else {
-            tooltipText .= "`n边缘指示器：已禁用"
+            tooltipText .= "`n边缘指示器: 已禁用"
         }
     } else {
         ; 简单模式：只显示程序名称
@@ -813,29 +813,29 @@ return
 createSettingsGUI:
     ; 如果设置窗口已存在，则激活它
     IfWinExist, WinAutoHide 设置
-    {
-        WinActivate, WinAutoHide 设置
-        return
-    }
+{
+    WinActivate, WinAutoHide 设置
+    return
+}
     
     ; 创建设置界面
     Gui, Settings:Add, Text, x20 y20 w300 h20, 基本设置：
-    Gui, Settings:Add, Checkbox, x40 y50 w250 h20 vCtrlRequired gUpdateCtrlSetting, 需要按住Ctrl键才能显示隐藏窗口
-    Gui, Settings:Add, Checkbox, x40 y80 w250 h20 vShowTrayDetails gUpdateTrayDetailsSetting, 托盘图标显示详细信息
-    Gui, Settings:Add, Checkbox, x40 y110 w250 h20 vEnableDragHide gUpdateDragHideSetting, 启用拖拽隐藏功能
-    Gui, Settings:Add, Checkbox, x40 y140 w250 h20 vShowIndicators gUpdateIndicatorsSetting, 显示边缘指示器
+Gui, Settings:Add, Checkbox, x40 y50 w250 h20 vCtrlRequired gUpdateCtrlSetting, 需要按住Ctrl键才能显示隐藏窗口
+Gui, Settings:Add, Checkbox, x40 y80 w250 h20 vShowTrayDetails gUpdateTrayDetailsSetting, 托盘图标显示详细信息
+Gui, Settings:Add, Checkbox, x40 y110 w250 h20 vEnableDragHide gUpdateDragHideSetting, 启用拖拽隐藏功能
+Gui, Settings:Add, Checkbox, x40 y140 w250 h20 vShowIndicators gUpdateIndicatorsSetting, 显示边缘指示器
     
     ; 添加分隔线
     Gui, Settings:Add, Text, x20 y170 w300 h1 0x10 ; SS_ETCHEDHORZ
     
     ; 使用说明区域
     Gui, Settings:Add, Text, x20 y190 w300 h20, 使用说明：
-    Gui, Settings:Add, Text, x40 y220 w280 h90, 使用快捷键 Ctrl+方向键 将当前窗口隐藏到屏幕边缘。`n隐藏后，将鼠标移动到屏幕边缘即可显示窗口。`n移动已显示的隐藏窗口将取消其自动隐藏状态。`n启用拖拽隐藏后，按住Ctrl拖拽窗口到边缘也可隐藏。`n边缘指示器会在屏幕边缘显示小的橙色条，提示有隐藏窗口。
+    Gui, Settings:Add, Text, x40 y220 w280 h90, 使用快捷键 Ctrl+方向键 将当前窗口隐藏到屏幕边缘。`n将鼠标移动到边缘即可显示隐藏窗口。`n移动已显示的隐藏窗口将取消自动隐藏。`n启用拖拽隐藏后，按住Ctrl拖拽到边缘也可隐藏。`n边缘指示器会在有隐藏窗口的位置显示橙色条。
     
     ; 按钮区域
     Gui, Settings:Add, Button, x40 y330 w80 h30 gShowAbout, 关于
-    Gui, Settings:Add, Button, x140 y330 w80 h30 gSaveSettings, 保存设置
-    Gui, Settings:Add, Button, x240 y330 w80 h30 gCloseSettings, 关闭
+Gui, Settings:Add, Button, x140 y330 w80 h30 gSaveSettings, 保存
+Gui, Settings:Add, Button, x240 y330 w80 h30 gCloseSettings, 关闭
     
     ; 设置复选框状态
     GuiControl, Settings:, CtrlRequired, %requireCtrl%
@@ -856,9 +856,9 @@ UpdateCtrlSetting:
     
     ; 更新托盘菜单状态
     if (requireCtrl) {
-        Menu, Tray, Check, 需要按Ctrl键显示
+        Menu, tray, Check, 需要按Ctrl键显示
     } else {
-        Menu, Tray, Uncheck, 需要按Ctrl键显示
+        Menu, tray, Uncheck, 需要按Ctrl键显示
     }
     
     ; 根据设置启用或禁用拖拽检测
@@ -918,7 +918,7 @@ return
 
 ; 显示关于信息
  ShowAbout:
-     MsgBox, 8256, 关于 WinAutoHide, BoD winautohide v1.1 修改版`n`n原作者：BoD (BoD@JRAF.org)`n修改者：hzhbest, MTpupil`n项目地址：https://github.com/MTpupil/winautohide`n`n主要功能：`n• 图形化设置界面`n• 托盘详细信息显示`n• 拖拽隐藏功能`n• 边缘指示器`n`n本程序及其源代码为公共领域。`n如需更多信息请联系原作者 BoD@JRAF.org
+     MsgBox, 8256, 关于 WinAutoHide, BoD winautohide v1.1 修改版`n`n原作者：BoD (BoD@JRAF.org)`n修改者：hzhbest, MTpupil`n项目地址：https://github.com/MTpupil/winautohide`n`n主要功能：`n• 图形化设置界面`n• 详细托盘信息`n• 拖拽隐藏功能`n• 边缘指示器`n`n本程序及其源代码属于公共领域。`n更多信息请联系原作者 BoD@JRAF.org
  return
  
  ; 保存设置
@@ -957,7 +957,7 @@ return
      Gui, Toast:New, +AlwaysOnTop -MaximizeBox -MinimizeBox +LastFound, 
      Gui, Toast:Color, 0xF0F0F0
      Gui, Toast:Font, s10
-     Gui, Toast:Add, Text, x15 y10 w120 h25 Center, 设置保存成功！
+     Gui, Toast:Add, Text, x15 y10 w120 h25 Center, 设置已保存！
      
      ; 获取屏幕尺寸并计算Toast位置（右下角）
      WinGetPos,,, Width, Height, A

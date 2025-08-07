@@ -21,6 +21,13 @@
 
 注意：这个小脚本是 ahk 格式的，请先安装 AutoHotkey(http://www.autohotkey.com/) 再运行 "winautohide.ahk" 来使用。
 
+**版本说明：**
+本项目提供两个版本的脚本：
+- **winautohide.ahk** - 中文界面版本，用于直接运行
+- **winautohide_en.ahk** - 英文界面版本，用于编译打包
+
+由于AutoHotkey编译器对中文字符的限制，编译后的可执行文件(.exe)只能使用英文界面版本。如果您希望使用中文界面，请直接运行winautohide.ahk脚本文件（需要安装AutoHotkey）。
+
 原作者：BoD@JRAF.org
 修改者：hzhbest, MTpupil
 项目地址：https://github.com/MTpupil/winautohide

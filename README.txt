@@ -23,6 +23,13 @@ Limitations:
 Note: this is an AutoHotkey script, install AutoHotkey before running "winautohide.ahk"
    (see http://www.autohotkey.com/).
 
+**Version Information:**
+This project provides two versions of the script:
+- **winautohide.ahk** - Chinese interface version for direct running
+- **winautohide_en.ahk** - English interface version for compilation
+
+Due to AutoHotkey compiler limitations with Chinese characters, the compiled executable (.exe) can only use the English interface version. If you prefer Chinese interface, please run the winautohide.ahk script directly with AutoHotkey installed.
+
 Original author: BoD@JRAF.org
 Modified by: hzhbest, MTpupil
 Project URL: https://github.com/MTpupil/winautohide
