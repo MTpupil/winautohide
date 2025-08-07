@@ -37,3 +37,4 @@ Version history:
 2025-08-06: v1.04 Modded by MTpupil: added Ctrl key requirement toggle, Chinese UI localization, improved user experience.
 2025-08-06: v1.05 Modded by MTpupil: implemented area detection for bottom-hidden windows to solve taskbar occlusion issue.
 2025-08-06: v1.06 Modded by MTpupil: fixed critical bugs - window movement detection and taskbar white bar issues.
+2025-08-06: v1.07 Modded by MTpupil: fixed browser and command line window black/white border issue when hidden.

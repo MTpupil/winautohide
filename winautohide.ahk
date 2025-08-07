@@ -1,11 +1,12 @@
 /*
- * winautohide v1.06 modified.
+ * winautohide v1.07 modified.
  * 新增功能：
  * 1. 必须按住Ctrl键时鼠标移上去窗口才会出现，单纯鼠标移上去不显示，防止误触
  * 2. 新增右键菜单开关，可启用/禁用Ctrl键要求，状态会保存
  * 3. 底部隐藏窗口使用区域检测，解决任务栏遮挡问题
  * 4. 修复窗口移动后仍自动隐藏的问题
  * 5. 修复取消自动隐藏时任务栏变成白色长条的问题
+ * 6. 修复浏览器和命令行窗口隐藏时出现黑边/白边的问题
  *
  * This program and its source are in the public domain.
  * Contact BoD@JRAF.org for more information.
@@ -18,6 +19,7 @@
  * 2025-08-06: v1.04: added Ctrl key requirement toggle, Chinese UI localization
  * 2025-08-06: v1.05: implemented area detection for bottom-hidden windows
  * 2025-08-06: v1.06: fixed window movement detection and taskbar issues
+ * 2025-08-06: v1.07: fixed browser and console window border rendering issues
  */
 CoordMode, Mouse, Screen		;MouseGetPos relative to Screen
 #SingleInstance ignore
@@ -288,6 +290,7 @@ unautohide:
     hidden_%curWinId% := false
     ; 清除所有相关变量
     originalExStyle_%curWinId% := ""
+    originalStyle_%curWinId% := ""
 return
 
 workWindow:
@@ -298,13 +301,57 @@ workWindow:
         ; 跳过任务栏和系统窗口
         return
     }
-    ; 保存原始ExStyle以便恢复
+    
+    ; 保存原始样式以便恢复
     WinGet, originalExStyle_%curWinId%, ExStyle, ahk_id %curWinId%
+    WinGet, originalStyle_%curWinId%, Style, ahk_id %curWinId%
+    
+    ; 检查是否为浏览器或命令行窗口，这些窗口对样式修改敏感
+    ; 浏览器窗口类名：Chrome系列、Firefox、Edge、Opera等
+    ; 命令行窗口类名：ConsoleWindowClass
+    isSensitiveWindow := false
+    ; Chrome系列浏览器
+    if (winClass = "Chrome_WidgetWin_1" || winClass = "Chrome_WidgetWin_0" 
+        || winClass = "Slimjet_WidgetWin_1") {
+        isSensitiveWindow := true
+    }
+    ; Firefox浏览器
+    else if (winClass = "MozillaWindowClass") {
+        isSensitiveWindow := true
+    }
+    ; Edge浏览器
+    else if (winClass = "ApplicationFrameWindow") {
+        isSensitiveWindow := true
+    }
+    ; Opera浏览器
+    else if (winClass = "OperaWindowClass" || winClass = "Maxthon3Cls_MainFrm") {
+        isSensitiveWindow := true
+    }
+    ; IE浏览器
+    else if (winClass = "IEFrame") {
+        isSensitiveWindow := true
+    }
+    ; 命令行窗口
+    else if (winClass = "ConsoleWindowClass") {
+        isSensitiveWindow := true
+    }
+    
     WinSet, AlwaysOnTop, on, ahk_id %curWinId% ; always-on-top
-    WinSet, Style, -0x40000, ahk_id %curWinId% ; disable resizing
+    
+    ; 对于敏感窗口，避免修改Style，只修改ExStyle
+    if (!isSensitiveWindow) {
+        WinSet, Style, -0x40000, ahk_id %curWinId% ; disable resizing (仅对非敏感窗口)
+    }
+    
     WinSet, ExStyle, +0x80, ahk_id %curWinId% ; remove from task bar
+    
     ; 设置窗口为最顶层，确保能够显示在任务栏上方
     DllCall("SetWindowPos", "ptr", curWinId, "ptr", -1, "int", 0, "int", 0, "int", 0, "int", 0, "uint", 0x0013)
+    
+    ; 对于敏感窗口，强制重绘以避免渲染问题
+    if (isSensitiveWindow) {
+        WinSet, Redraw,, ahk_id %curWinId%
+    }
 return
 
 unworkWindow:
@@ -315,8 +362,47 @@ unworkWindow:
         ; 跳过任务栏和系统窗口
         return
     }
-    WinSet, AlwaysOnTop, off, ahk_id %curWinId% ; always-on-top
-    WinSet, Style, +0x40000, ahk_id %curWinId% ; enable resizing
+    
+    ; 检查是否为敏感窗口（与workWindow函数保持一致）
+    isSensitiveWindow := false
+    ; Chrome系列浏览器
+    if (winClass = "Chrome_WidgetWin_1" || winClass = "Chrome_WidgetWin_0" 
+        || winClass = "Slimjet_WidgetWin_1") {
+        isSensitiveWindow := true
+    }
+    ; Firefox浏览器
+    else if (winClass = "MozillaWindowClass") {
+        isSensitiveWindow := true
+    }
+    ; Edge浏览器
+    else if (winClass = "ApplicationFrameWindow") {
+        isSensitiveWindow := true
+    }
+    ; Opera浏览器
+    else if (winClass = "OperaWindowClass" || winClass = "Maxthon3Cls_MainFrm") {
+        isSensitiveWindow := true
+    }
+    ; IE浏览器
+    else if (winClass = "IEFrame") {
+        isSensitiveWindow := true
+    }
+    ; 命令行窗口
+    else if (winClass = "ConsoleWindowClass") {
+        isSensitiveWindow := true
+    }
+    
+    WinSet, AlwaysOnTop, off, ahk_id %curWinId% ; 取消always-on-top
+    
+    ; 恢复原始Style（仅对非敏感窗口）
+    savedStyle := originalStyle_%curWinId%
+    if (!isSensitiveWindow && savedStyle != "") {
+        WinSet, Style, %savedStyle%, ahk_id %curWinId%
+        originalStyle_%curWinId% := "" ; 清除保存的值
+    } else if (!isSensitiveWindow) {
+        ; 备用方案：恢复调整大小功能
+        WinSet, Style, +0x40000, ahk_id %curWinId% ; enable resizing
+    }
+    
     ; 恢复原始ExStyle，避免对任务栏造成影响
     savedExStyle := originalExStyle_%curWinId%
     if (savedExStyle != "") {
@@ -328,6 +414,12 @@ unworkWindow:
         newExStyle := currentExStyle & ~0x80  ; 移除 WS_EX_TOOLWINDOW 标志
         WinSet, ExStyle, %newExStyle%, ahk_id %curWinId%
     }
+    
     ; 恢复正常窗口层级
     DllCall("SetWindowPos", "ptr", curWinId, "ptr", 0, "int", 0, "int", 0, "int", 0, "int", 0, "uint", 0x0013)
+    
+    ; 对于敏感窗口，强制重绘以确保正确恢复
+    if (isSensitiveWindow) {
+        WinSet, Redraw,, ahk_id %curWinId%
+    }
 return
