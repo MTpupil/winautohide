@@ -8,6 +8,7 @@
  * 5. 修复取消自动隐藏时任务栏变成白色长条的问题
  * 6. 修复浏览器和命令行窗口隐藏时出现黑边/白边的问题
  * 7. 新增图形化设置界面，双击托盘图标打开设置，包含关于信息和保存成功提醒
+ * 8. 新增边缘指示器功能，为隐藏的窗口在屏幕边缘显示小指示器，可在设置中开关
  *
  * This program and its source are in the public domain.
  * Contact BoD@JRAF.org for more information.
@@ -33,10 +34,12 @@ If (FileExist(configFile)) {
     IniRead, requireCtrl, %configFile%, Settings, RequireCtrl, 1 ; 默认启用
     IniRead, showTrayDetails, %configFile%, Settings, ShowTrayDetails, 0 ; 默认显示详细信息
     IniRead, enableDragHide, %configFile%, Settings, EnableDragHide, 0 ; 默认启用拖拽隐藏
+    IniRead, showIndicators, %configFile%, Settings, ShowIndicators, 1 ; 默认显示边缘指示器
 } else {
     requireCtrl := 1 ; 默认启用Ctrl要求
     showTrayDetails := 0 ; 默认显示详细信息
     enableDragHide := 1 ; 默认启用拖拽隐藏
+    showIndicators := 1 ; 默认显示边缘指示器
 }
 
 /*
@@ -78,8 +81,158 @@ If (requireCtrl = 1) {
 ; 初始化托盘图标提示
 Gosub, updateTrayTooltip
 
+; 初始化指示器显示
+Gosub, updateIndicators
+
 
 return ; end of code that is to be executed on script start-up
+
+
+/*
+ * 边缘指示器功能实现
+ * 为隐藏的窗口在屏幕边缘显示小的指示器
+ */
+
+; 创建指示器窗口
+createIndicator(winId, side) {
+    global
+    
+    ; 如果指示器功能被禁用，直接返回
+    if (!showIndicators) {
+        return
+    }
+    
+    ; 获取窗口标题用于指示器提示
+    WinGetTitle, winTitle, ahk_id %winId%
+    if (winTitle = "") {
+        winTitle := "隐藏窗口"
+    }
+    
+    ; 限制标题长度
+    if (StrLen(winTitle) > 20) {
+        winTitle := SubStr(winTitle, 1, 17) . "..."
+    }
+    
+    ; 计算指示器位置和尺寸
+    indicatorWidth := 4
+    indicatorHeight := 60
+    
+    if (side = "left") {
+        indicatorX := 0
+        indicatorY := hidden_%winId%_y + 20  ; 在窗口隐藏位置附近显示
+        indicatorWidth := 4
+        indicatorHeight := 60
+    } else if (side = "right") {
+        indicatorX := A_ScreenWidth - 4
+        indicatorY := hidden_%winId%_y + 20
+        indicatorWidth := 4
+        indicatorHeight := 60
+    } else if (side = "up") {
+        indicatorX := hidden_%winId%_x + 20
+        indicatorY := 0
+        indicatorWidth := 60
+        indicatorHeight := 4
+    } else if (side = "down") {
+        indicatorX := hidden_%winId%_x + 20
+        indicatorY := A_ScreenHeight - 4
+        indicatorWidth := 60
+        indicatorHeight := 4
+    }
+    
+    ; 确保指示器在屏幕范围内
+    if (indicatorX < 0) {
+        indicatorX := 0
+    }
+    if (indicatorY < 0) {
+        indicatorY := 0
+    }
+    if (indicatorX + indicatorWidth > A_ScreenWidth) {
+        indicatorX := A_ScreenWidth - indicatorWidth
+    }
+    if (indicatorY + indicatorHeight > A_ScreenHeight) {
+        indicatorY := A_ScreenHeight - indicatorHeight
+    }
+    
+    ; 创建指示器GUI
+    Gui, Indicator%winId%:New, +AlwaysOnTop -Caption +ToolWindow +LastFound, WinAutoHide指示器
+    Gui, Indicator%winId%:Color, 0xFF6B35  ; 橙红色指示器
+    
+    ; 设置指示器窗口属性
+    WinSet, ExStyle, +0x20, % "ahk_id " . WinExist()  ; WS_EX_TRANSPARENT - 鼠标穿透
+    
+    ; 显示指示器
+    Gui, Indicator%winId%:Show, x%indicatorX% y%indicatorY% w%indicatorWidth% h%indicatorHeight% NoActivate
+    
+    ; 保存指示器信息
+    indicator_%winId%_exists := true
+    indicator_%winId%_side := side
+    indicator_%winId%_title := winTitle
+    
+    ; 设置指示器提示信息
+    WinGet, indicatorHwnd, ID, WinAutoHide指示器
+    if (indicatorHwnd) {
+        ; 使用Windows API设置工具提示
+        DllCall("SetWindowText", "Ptr", indicatorHwnd, "Str", "隐藏窗口: " . winTitle)
+    }
+}
+
+; 销毁指示器
+destroyIndicator(winId) {
+    global
+    
+    if (indicator_%winId%_exists) {
+        Gui, Indicator%winId%:Destroy
+        indicator_%winId%_exists := false
+        indicator_%winId%_side := ""
+        indicator_%winId%_title := ""
+    }
+}
+
+; 更新所有指示器的显示状态
+updateIndicators:
+    ; 如果指示器功能被禁用，销毁所有现有指示器
+    if (!showIndicators) {
+        Loop, Parse, autohideWindows, `,
+        {
+            curWinId := A_LoopField
+            if (curWinId != "" && indicator_%curWinId%_exists) {
+                destroyIndicator(curWinId)
+            }
+        }
+        return
+    }
+    
+    ; 遍历所有自动隐藏窗口，为隐藏状态的窗口创建指示器
+    Loop, Parse, autohideWindows, `,
+    {
+        curWinId := A_LoopField
+        if (curWinId != "" && autohide_%curWinId% && hidden_%curWinId%) {
+            ; 如果窗口已隐藏但指示器不存在，创建指示器
+            if (!indicator_%curWinId%_exists) {
+                ; 确定隐藏方向
+                WinGetPos, winX, winY, winWidth, winHeight, ahk_id %curWinId%
+                
+                ; 根据隐藏位置判断方向
+                if (hidden_%curWinId%_x <= 1) {
+                    side := "left"
+                } else if (hidden_%curWinId%_x >= A_ScreenWidth - winWidth) {
+                    side := "right"
+                } else if (hidden_%curWinId%_y <= 1) {
+                    side := "up"
+                } else {
+                    side := "down"
+                }
+                
+                createIndicator(curWinId, side)
+            }
+        } else {
+            ; 如果窗口未隐藏或不是自动隐藏状态，销毁指示器
+            if (indicator_%curWinId%_exists) {
+                destroyIndicator(curWinId)
+            }
+        }
+    }
+return
 
 
 /*
@@ -214,9 +367,15 @@ updateTrayTooltip:
         } else {
             tooltipText .= "`n`n鼠标移动到边缘即可显示隐藏窗口"
         }
+        
+        if (showIndicators) {
+            tooltipText .= "`n边缘指示器：已启用"
+        } else {
+            tooltipText .= "`n边缘指示器：已禁用"
+        }
     } else {
         ; 简单模式：只显示程序名称
-        tooltipText := "WinAutoHide v1.08"
+        tooltipText := "WinAutoHide v1.09"
     }
     
     ; 更新托盘图标提示
@@ -255,11 +414,27 @@ menuUnautohideAll:
             Gosub, unautohide
         }
     }
+    ; 清理所有指示器
+    Loop, Parse, autohideWindows, `,
+    {
+        curWinId := A_LoopField
+        if (curWinId != "" && indicator_%curWinId%_exists) {
+            destroyIndicator(curWinId)
+        }
+    }
     ; 更新托盘提示信息
     Gosub, updateTrayTooltip
 return
 
 menuExit:
+    ; 清理所有指示器
+    Loop, Parse, autohideWindows, `,
+    {
+        curWinId := A_LoopField
+        if (curWinId != "" && indicator_%curWinId%_exists) {
+            destroyIndicator(curWinId)
+        }
+    }
     Gosub, menuUnautohideAll
     ExitApp
 return
@@ -289,11 +464,15 @@ watchCursor:
                     ; 显示隐藏的窗口
                     previousActiveWindow := WinExist("A")
                     WinMove, ahk_id %checkWinId%, , showing_%checkWinId%_x, showing_%checkWinId%_y
-                    WinActivate, ahk_id %checkWinId% ; 移动后再激活，避免位置变化
-                    ; 更新窗口位置变量，确保移动检测的准确性
-                    WinGetPos %checkWinId%_X, %checkWinId%_Y, %checkWinId%_W, %checkWinId%_H, ahk_id %checkWinId%
-                    hidden_%checkWinId% := false
-                    needHide := checkWinId
+                WinActivate, ahk_id %checkWinId% ; 移动后再激活，避免位置变化
+                ; 更新窗口位置变量，确保移动检测的准确性
+                WinGetPos %checkWinId%_X, %checkWinId%_Y, %checkWinId%_W, %checkWinId%_H, ahk_id %checkWinId%
+                hidden_%checkWinId% := false
+                
+                ; 隐藏指示器（窗口显示时）
+                destroyIndicator(checkWinId)
+                
+                needHide := checkWinId
                     break ; 找到一个就退出循环
                 }
             }
@@ -314,6 +493,10 @@ watchCursor:
                 WinGetPos %winId%_X, %winId%_Y, %winId%_W, %winId%_H, ahk_id %winId%
                 ; update win pos after showing
                 hidden_%winId% := false
+                
+                ; 隐藏指示器（窗口显示时）
+                destroyIndicator(winId)
+                
                 needHide := winId ; store it for next iteration
             }
         }
@@ -337,6 +520,8 @@ watchCursor:
                 hideArea_%curWinId%_active := false  ; 清除区域检测设置
                 Gosub, unworkWindow
                 hidden_%curWinId% := false
+                ; 销毁指示器（窗口移动后取消自动隐藏）
+                destroyIndicator(curWinId)
                 ; 更新托盘提示信息
                 Gosub, updateTrayTooltip
                 ; 窗口移动后完全取消自动隐藏，直接返回不再执行后续逻辑
@@ -347,6 +532,23 @@ watchCursor:
                 ; move it to 'hidden' position
                 WinActivate, ahk_id %previousActiveWindow% ; activate previously active window
                 hidden_%needHide% := true
+                
+                ; 重新显示指示器（窗口隐藏时）
+                if (showIndicators) {
+                    ; 确定隐藏方向
+                    WinGetPos, winX, winY, winWidth, winHeight, ahk_id %needHide%
+                    if (hidden_%needHide%_x <= 1) {
+                        side := "left"
+                    } else if (hidden_%needHide%_x >= A_ScreenWidth - winWidth) {
+                        side := "right"
+                    } else if (hidden_%needHide%_y <= 1) {
+                        side := "up"
+                    } else {
+                        side := "down"
+                    }
+                    createIndicator(needHide, side)
+                }
+                
                 needHide := false ; do that only once
             }
         }
@@ -439,8 +641,16 @@ toggleWindow:
         Sleep 300
         WinMove, ahk_id %curWinId%, , hidden_%curWinId%_x, hidden_%curWinId%_y ; hide the window
         hidden_%curWinId% := true
+        
+        ; 创建边缘指示器
+        if (showIndicators) {
+            createIndicator(curWinId, mode)
+        }
+        
         ; 更新托盘提示信息
         Gosub, updateTrayTooltip
+        ; 更新指示器显示
+        Gosub, updateIndicators
     }
 return
 
@@ -453,6 +663,10 @@ unautohide:
     Gosub, unworkWindow
     WinMove, ahk_id %curWinId%, , orig_%curWinId%_x, orig_%curWinId%_y ; go back to original position
     hidden_%curWinId% := false
+    
+    ; 销毁边缘指示器
+    destroyIndicator(curWinId)
+    
     ; 清除所有相关变量
     originalExStyle_%curWinId% := ""
     originalStyle_%curWinId% := ""
@@ -607,26 +821,28 @@ createSettingsGUI:
     Gui, Settings:Add, Checkbox, x40 y50 w250 h20 vCtrlRequired gUpdateCtrlSetting, 需要按住Ctrl键才能显示隐藏窗口
     Gui, Settings:Add, Checkbox, x40 y80 w250 h20 vShowTrayDetails gUpdateTrayDetailsSetting, 托盘图标显示详细信息
     Gui, Settings:Add, Checkbox, x40 y110 w250 h20 vEnableDragHide gUpdateDragHideSetting, 启用拖拽隐藏功能
+    Gui, Settings:Add, Checkbox, x40 y140 w250 h20 vShowIndicators gUpdateIndicatorsSetting, 显示边缘指示器
     
     ; 添加分隔线
-    Gui, Settings:Add, Text, x20 y140 w300 h1 0x10 ; SS_ETCHEDHORZ
+    Gui, Settings:Add, Text, x20 y170 w300 h1 0x10 ; SS_ETCHEDHORZ
     
     ; 使用说明区域
-    Gui, Settings:Add, Text, x20 y160 w300 h20, 使用说明：
-    Gui, Settings:Add, Text, x40 y190 w280 h80, 使用快捷键 Ctrl+方向键 将当前窗口隐藏到屏幕边缘。`n隐藏后，将鼠标移动到屏幕边缘即可显示窗口。`n移动已显示的隐藏窗口将取消其自动隐藏状态。`n启用拖拽隐藏后，按住Ctrl拖拽窗口到边缘也可隐藏。
+    Gui, Settings:Add, Text, x20 y190 w300 h20, 使用说明：
+    Gui, Settings:Add, Text, x40 y220 w280 h90, 使用快捷键 Ctrl+方向键 将当前窗口隐藏到屏幕边缘。`n隐藏后，将鼠标移动到屏幕边缘即可显示窗口。`n移动已显示的隐藏窗口将取消其自动隐藏状态。`n启用拖拽隐藏后，按住Ctrl拖拽窗口到边缘也可隐藏。`n边缘指示器会在屏幕边缘显示小的橙色条，提示有隐藏窗口。
     
     ; 按钮区域
-    Gui, Settings:Add, Button, x40 y290 w80 h30 gShowAbout, 关于
-    Gui, Settings:Add, Button, x140 y290 w80 h30 gSaveSettings, 保存设置
-    Gui, Settings:Add, Button, x240 y290 w80 h30 gCloseSettings, 关闭
+    Gui, Settings:Add, Button, x40 y330 w80 h30 gShowAbout, 关于
+    Gui, Settings:Add, Button, x140 y330 w80 h30 gSaveSettings, 保存设置
+    Gui, Settings:Add, Button, x240 y330 w80 h30 gCloseSettings, 关闭
     
     ; 设置复选框状态
     GuiControl, Settings:, CtrlRequired, %requireCtrl%
     GuiControl, Settings:, ShowTrayDetails, %showTrayDetails%
     GuiControl, Settings:, EnableDragHide, %enableDragHide%
+    GuiControl, Settings:, ShowIndicators, %showIndicators%
     
     ; 显示设置窗口
-    Gui, Settings:Show, w360 h340, WinAutoHide 设置
+    Gui, Settings:Show, w360 h380, WinAutoHide 设置
 return
 
 ; 实时更新Ctrl设置
@@ -634,6 +850,7 @@ UpdateCtrlSetting:
     Gui, Settings:Submit, NoHide
     requireCtrl := CtrlRequired
     enableDragHide := EnableDragHide
+    showIndicators := ShowIndicators
     
     ; 更新托盘菜单状态
     if (requireCtrl) {
@@ -649,6 +866,9 @@ UpdateCtrlSetting:
         SetTimer, checkDragHide, Off
     }
     
+    ; 更新指示器显示
+    Gosub, updateIndicators
+    
     ; 立即更新托盘提示信息
     Gosub, updateTrayTooltip
 return
@@ -657,6 +877,10 @@ return
 UpdateTrayDetailsSetting:
     Gui, Settings:Submit, NoHide
     showTrayDetails := ShowTrayDetails
+    showIndicators := ShowIndicators
+    
+    ; 更新指示器显示
+    Gosub, updateIndicators
     
     ; 立即更新托盘提示信息
     Gosub, updateTrayTooltip
@@ -666,6 +890,7 @@ return
 UpdateDragHideSetting:
     Gui, Settings:Submit, NoHide
     enableDragHide := EnableDragHide
+    showIndicators := ShowIndicators
     
     ; 根据设置启用或禁用拖拽检测
     if (enableDragHide) {
@@ -675,11 +900,23 @@ UpdateDragHideSetting:
         ; 停止拖拽检测定时器
         SetTimer, checkDragHide, Off
     }
+    
+    ; 更新指示器显示
+    Gosub, updateIndicators
+return
+
+; 实时更新指示器设置
+UpdateIndicatorsSetting:
+    Gui, Settings:Submit, NoHide
+    showIndicators := ShowIndicators
+    
+    ; 更新指示器显示
+    Gosub, updateIndicators
 return
 
 ; 显示关于信息
  ShowAbout:
-     MsgBox, 8256, 关于 WinAutoHide, BoD winautohide v1.08 修改版`n`n原作者：BoD (BoD@JRAF.org)`n修改者：hzhbest, MTpupil`n项目地址：https://github.com/MTpupil/winautohide`n`n本程序及其源代码为公共领域。`n如需更多信息请联系原作者 BoD@JRAF.org
+     MsgBox, 8256, 关于 WinAutoHide, BoD winautohide v1.09 修改版`n`n原作者：BoD (BoD@JRAF.org)`n修改者：hzhbest, MTpupil`n项目地址：https://github.com/MTpupil/winautohide`n`n新增功能：边缘指示器，为隐藏窗口显示橙色提示条`n`n本程序及其源代码为公共领域。`n如需更多信息请联系原作者 BoD@JRAF.org
  return
  
  ; 保存设置
@@ -688,11 +925,13 @@ return
        requireCtrl := CtrlRequired
        showTrayDetails := ShowTrayDetails
        enableDragHide := EnableDragHide
+       showIndicators := ShowIndicators
        
        ; 保存设置到配置文件
        IniWrite, %requireCtrl%, %configFile%, Settings, RequireCtrl
        IniWrite, %showTrayDetails%, %configFile%, Settings, ShowTrayDetails
        IniWrite, %enableDragHide%, %configFile%, Settings, EnableDragHide
+       IniWrite, %showIndicators%, %configFile%, Settings, ShowIndicators
       
       ; 更新托盘菜单状态
       If (requireCtrl = 1) {
@@ -702,13 +941,16 @@ return
       }
       
       ; 根据设置启用或禁用拖拽检测
-      if (enableDragHide) {
-          SetTimer, checkDragHide, 100
-      } else {
-          SetTimer, checkDragHide, Off
-      }
+     if (enableDragHide) {
+         SetTimer, checkDragHide, 100
+     } else {
+         SetTimer, checkDragHide, Off
+     }
      
-     ; 显示保存成功提醒（自动消失的Toast通知）
+     ; 更新指示器显示
+     Gosub, updateIndicators
+    
+    ; 显示保存成功提醒（自动消失的Toast通知）
      ; 创建一个小的提示窗口
      Gui, Toast:New, +AlwaysOnTop -MaximizeBox -MinimizeBox +LastFound, 
      Gui, Toast:Color, 0xF0F0F0
