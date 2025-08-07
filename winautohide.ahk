@@ -31,10 +31,12 @@ Menu tray, Icon, %A_ScriptDir%\winautohide.ico
 configFile := A_ScriptDir "\winautohide.ini"
 If (FileExist(configFile)) {
     IniRead, requireCtrl, %configFile%, Settings, RequireCtrl, 1 ; 默认启用
-    IniRead, showTrayDetails, %configFile%, Settings, ShowTrayDetails, 1 ; 默认显示详细信息
+    IniRead, showTrayDetails, %configFile%, Settings, ShowTrayDetails, 0 ; 默认显示详细信息
+    IniRead, enableDragHide, %configFile%, Settings, EnableDragHide, 0 ; 默认启用拖拽隐藏
 } else {
     requireCtrl := 1 ; 默认启用Ctrl要求
-    showTrayDetails := 1 ; 默认显示详细信息
+    showTrayDetails := 0 ; 默认显示详细信息
+    enableDragHide := 1 ; 默认启用拖拽隐藏
 }
 
 /*
@@ -50,6 +52,11 @@ Hotkey, ^down, toggleWindowDown    ; Ctrl+下箭头
  * Timer initialization.
  */
 SetTimer, watchCursor, 300
+
+; 根据设置启动拖拽检测定时器
+if (enableDragHide) {
+    SetTimer, checkDragHide, 100
+}
 
 /*
  * Tray menu initialization.
@@ -73,6 +80,92 @@ Gosub, updateTrayTooltip
 
 
 return ; end of code that is to be executed on script start-up
+
+
+/*
+  * 拖拽隐藏检测
+  */
+ checkDragHide:
+     ; 检查是否按住Ctrl键
+     if (!GetKeyState("Ctrl", "P")) {
+         return
+     }
+     
+     ; 检查是否按住鼠标左键（拖拽状态）
+     if (!GetKeyState("LButton", "P")) {
+         return
+     }
+     
+     ; 获取当前鼠标位置下的窗口
+     MouseGetPos, mouseX, mouseY, winId
+     
+     ; 检查窗口是否有效
+     if (!winId) {
+         return
+     }
+     
+     ; 获取窗口类名，排除系统窗口
+     WinGetClass, winClass, ahk_id %winId%
+     if (winClass = "WorkerW" || winClass = "Shell_TrayWnd" || winClass = "DV2ControlHost") {
+         return
+     }
+     
+     ; 检查窗口是否已经是自动隐藏状态
+     if (autohide_%winId%) {
+         return
+     }
+     
+     ; 获取窗口位置和尺寸
+     WinGetPos, winX, winY, winWidth, winHeight, ahk_id %winId%
+     
+     ; 获取屏幕尺寸
+     SysGet, screenWidth, 78
+     SysGet, screenHeight, 79
+     
+     ; 计算窗口三分之一的尺寸
+     oneThirdWidth := winWidth // 3
+     oneThirdHeight := winHeight // 3
+     
+     ; 检查窗口是否有三分之一移出屏幕
+     ; 左边缘：窗口左边界超出屏幕左边界的三分之一宽度
+     leftOutside := (winX + oneThirdWidth < 0)
+     
+     ; 右边缘：窗口右边界超出屏幕右边界的三分之一宽度
+     rightOutside := (winX + winWidth - oneThirdWidth > screenWidth)
+     
+     ; 上边缘：窗口上边界超出屏幕上边界的三分之一高度
+     topOutside := (winY + oneThirdHeight < 0)
+     
+     ; 下边缘：窗口下边界超出屏幕下边界的三分之一高度
+     bottomOutside := (winY + winHeight - oneThirdHeight > screenHeight)
+     
+     ; 如果窗口有三分之一移出屏幕，触发相应的隐藏操作
+     if (leftOutside) {
+         WinActivate, ahk_id %winId%
+         curWinId := winId
+         WinGet, curWinPId, PID, ahk_id %winId%
+         mode := "left"
+         Gosub, toggleWindow
+     } else if (rightOutside) {
+         WinActivate, ahk_id %winId%
+         curWinId := winId
+         WinGet, curWinPId, PID, ahk_id %winId%
+         mode := "right"
+         Gosub, toggleWindow
+     } else if (topOutside) {
+         WinActivate, ahk_id %winId%
+         curWinId := winId
+         WinGet, curWinPId, PID, ahk_id %winId%
+         mode := "up"
+         Gosub, toggleWindow
+     } else if (bottomOutside) {
+         WinActivate, ahk_id %winId%
+         curWinId := winId
+         WinGet, curWinPId, PID, ahk_id %winId%
+         mode := "down"
+         Gosub, toggleWindow
+     }
+ return
 
 
 /*
@@ -513,39 +606,50 @@ createSettingsGUI:
     Gui, Settings:Add, Text, x20 y20 w300 h20, 基本设置：
     Gui, Settings:Add, Checkbox, x40 y50 w250 h20 vCtrlRequired gUpdateCtrlSetting, 需要按住Ctrl键才能显示隐藏窗口
     Gui, Settings:Add, Checkbox, x40 y80 w250 h20 vShowTrayDetails gUpdateTrayDetailsSetting, 托盘图标显示详细信息
+    Gui, Settings:Add, Checkbox, x40 y110 w250 h20 vEnableDragHide gUpdateDragHideSetting, 启用拖拽隐藏功能
     
     ; 添加分隔线
-    Gui, Settings:Add, Text, x20 y110 w300 h1 0x10 ; SS_ETCHEDHORZ
+    Gui, Settings:Add, Text, x20 y140 w300 h1 0x10 ; SS_ETCHEDHORZ
     
     ; 使用说明区域
-    Gui, Settings:Add, Text, x20 y130 w300 h20, 使用说明：
-    Gui, Settings:Add, Text, x40 y160 w280 h80, 使用快捷键 Ctrl+方向键 将当前窗口隐藏到屏幕边缘。`n隐藏后，将鼠标移动到屏幕边缘即可显示窗口。`n移动已显示的隐藏窗口将取消其自动隐藏状态。`n底部隐藏的窗口使用区域检测，避免任务栏遮挡。
+    Gui, Settings:Add, Text, x20 y160 w300 h20, 使用说明：
+    Gui, Settings:Add, Text, x40 y190 w280 h80, 使用快捷键 Ctrl+方向键 将当前窗口隐藏到屏幕边缘。`n隐藏后，将鼠标移动到屏幕边缘即可显示窗口。`n移动已显示的隐藏窗口将取消其自动隐藏状态。`n启用拖拽隐藏后，按住Ctrl拖拽窗口到边缘也可隐藏。
     
     ; 按钮区域
-    Gui, Settings:Add, Button, x40 y260 w80 h30 gShowAbout, 关于
-    Gui, Settings:Add, Button, x140 y260 w80 h30 gSaveSettings, 保存设置
-    Gui, Settings:Add, Button, x240 y260 w80 h30 gCloseSettings, 关闭
+    Gui, Settings:Add, Button, x40 y290 w80 h30 gShowAbout, 关于
+    Gui, Settings:Add, Button, x140 y290 w80 h30 gSaveSettings, 保存设置
+    Gui, Settings:Add, Button, x240 y290 w80 h30 gCloseSettings, 关闭
     
     ; 设置复选框状态
     GuiControl, Settings:, CtrlRequired, %requireCtrl%
     GuiControl, Settings:, ShowTrayDetails, %showTrayDetails%
+    GuiControl, Settings:, EnableDragHide, %enableDragHide%
     
     ; 显示设置窗口
-    Gui, Settings:Show, w360 h310, WinAutoHide 设置
+    Gui, Settings:Show, w360 h340, WinAutoHide 设置
 return
 
 ; 实时更新Ctrl设置
 UpdateCtrlSetting:
     Gui, Settings:Submit, NoHide
     requireCtrl := CtrlRequired
+    enableDragHide := EnableDragHide
     
     ; 更新托盘菜单状态
-    If (requireCtrl = 1) {
-        Menu, tray, Check, 需要按Ctrl键显示
+    if (requireCtrl) {
+        Menu, Tray, Check, 需要按Ctrl键显示
     } else {
-        Menu, tray, Uncheck, 需要按Ctrl键显示
+        Menu, Tray, Uncheck, 需要按Ctrl键显示
     }
-    ; 更新托盘提示信息
+    
+    ; 根据设置启用或禁用拖拽检测
+    if (enableDragHide) {
+        SetTimer, checkDragHide, 100
+    } else {
+        SetTimer, checkDragHide, Off
+    }
+    
+    ; 立即更新托盘提示信息
     Gosub, updateTrayTooltip
 return
 
@@ -558,6 +662,21 @@ UpdateTrayDetailsSetting:
     Gosub, updateTrayTooltip
 return
 
+; 实时更新拖拽隐藏设置
+UpdateDragHideSetting:
+    Gui, Settings:Submit, NoHide
+    enableDragHide := EnableDragHide
+    
+    ; 根据设置启用或禁用拖拽检测
+    if (enableDragHide) {
+        ; 启动拖拽检测定时器
+        SetTimer, checkDragHide, 100
+    } else {
+        ; 停止拖拽检测定时器
+        SetTimer, checkDragHide, Off
+    }
+return
+
 ; 显示关于信息
  ShowAbout:
      MsgBox, 8256, 关于 WinAutoHide, BoD winautohide v1.08 修改版`n`n原作者：BoD (BoD@JRAF.org)`n修改者：hzhbest, MTpupil`n项目地址：https://github.com/MTpupil/winautohide`n`n本程序及其源代码为公共领域。`n如需更多信息请联系原作者 BoD@JRAF.org
@@ -565,19 +684,28 @@ return
  
  ; 保存设置
  SaveSettings:
-      Gui, Settings:Submit, NoHide
-      requireCtrl := CtrlRequired
-      showTrayDetails := ShowTrayDetails
-      
-      ; 保存设置到配置文件
-      IniWrite, %requireCtrl%, %configFile%, Settings, RequireCtrl
-      IniWrite, %showTrayDetails%, %configFile%, Settings, ShowTrayDetails
+       Gui, Settings:Submit, NoHide
+       requireCtrl := CtrlRequired
+       showTrayDetails := ShowTrayDetails
+       enableDragHide := EnableDragHide
+       
+       ; 保存设置到配置文件
+       IniWrite, %requireCtrl%, %configFile%, Settings, RequireCtrl
+       IniWrite, %showTrayDetails%, %configFile%, Settings, ShowTrayDetails
+       IniWrite, %enableDragHide%, %configFile%, Settings, EnableDragHide
       
       ; 更新托盘菜单状态
       If (requireCtrl = 1) {
           Menu, tray, Check, 需要按Ctrl键显示
       } else {
           Menu, tray, Uncheck, 需要按Ctrl键显示
+      }
+      
+      ; 根据设置启用或禁用拖拽检测
+      if (enableDragHide) {
+          SetTimer, checkDragHide, 100
+      } else {
+          SetTimer, checkDragHide, Off
       }
      
      ; 显示保存成功提醒（自动消失的Toast通知）
