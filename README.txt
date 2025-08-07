@@ -38,4 +38,7 @@ Version history:
 2025-08-06: v1.05 Modded by MTpupil: implemented area detection for bottom-hidden windows to solve taskbar occlusion issue.
 2025-08-06: v1.06 Modded by MTpupil: fixed critical bugs - window movement detection and taskbar white bar issues.
 2025-08-07: v1.07 Modded by MTpupil: fixed browser and command line window black/white border issue when hidden.
-2025-08-07: v1.08 Modded by MTpupil: added graphical settings interface, double-click tray icon to open settings, integrated about info, added save success notification.
+2025-08-07: v1.1 Modded by MTpupil: 1. Added graphical settings interface, double-click tray icon to open settings.
+                                    2. Added tray icon detailed information feature, can be enabled/disabled in settings.
+                                    3. Added drag-to-hide functionality, hold Ctrl and drag window beyond one-third of screen edge to hide it, can be enabled/disabled in settings.
+                                    4. Added edge indicators that show when there are hidden windows at screen edges, can be enabled/disabled in settings.

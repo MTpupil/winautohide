@@ -1,5 +1,5 @@
 /*
- * winautohide v1.08 modified.
+ * winautohide v1.1 modified.
  * 新增功能：
  * 1. 必须按住Ctrl键时鼠标移上去窗口才会出现，单纯鼠标移上去不显示，防止误触
  * 2. 新增右键菜单开关，可启用/禁用Ctrl键要求，状态会保存
@@ -8,7 +8,9 @@
  * 5. 修复取消自动隐藏时任务栏变成白色长条的问题
  * 6. 修复浏览器和命令行窗口隐藏时出现黑边/白边的问题
  * 7. 新增图形化设置界面，双击托盘图标打开设置，包含关于信息和保存成功提醒
- * 8. 新增边缘指示器功能，为隐藏的窗口在屏幕边缘显示小指示器，可在设置中开关
+ * 8. 新增托盘图标显示详细信息功能，可在设置中开启和关闭
+ * 9. 新增拖拽窗口隐藏功能，按住Ctrl键并拖拽窗口到屏幕外超过三分之一可隐藏窗口
+ * 10. 新增边缘指示器功能，为隐藏的窗口在屏幕边缘显示小指示器，可在设置中开关
  *
  * This program and its source are in the public domain.
  * Contact BoD@JRAF.org for more information.
@@ -22,7 +24,7 @@
  * 2025-08-06: v1.05: implemented area detection for bottom-hidden windows
  * 2025-08-06: v1.06: fixed window movement detection and taskbar issues
  * 2025-08-07: v1.07: fixed browser and console window border rendering issues
- * 2025-08-07: v1.08: added graphical settings interface with about info and save notifications
+ * 2025-08-07: v1.1: added graphical settings interface, tray details, drag-to-hide, and edge indicators
  */
 CoordMode, Mouse, Screen		;MouseGetPos relative to Screen
 #SingleInstance ignore
@@ -375,7 +377,7 @@ updateTrayTooltip:
         }
     } else {
         ; 简单模式：只显示程序名称
-        tooltipText := "WinAutoHide v1.09"
+        tooltipText := "WinAutoHide v1.1"
     }
     
     ; 更新托盘图标提示
@@ -916,7 +918,7 @@ return
 
 ; 显示关于信息
  ShowAbout:
-     MsgBox, 8256, 关于 WinAutoHide, BoD winautohide v1.09 修改版`n`n原作者：BoD (BoD@JRAF.org)`n修改者：hzhbest, MTpupil`n项目地址：https://github.com/MTpupil/winautohide`n`n新增功能：边缘指示器，为隐藏窗口显示橙色提示条`n`n本程序及其源代码为公共领域。`n如需更多信息请联系原作者 BoD@JRAF.org
+     MsgBox, 8256, 关于 WinAutoHide, BoD winautohide v1.1 修改版`n`n原作者：BoD (BoD@JRAF.org)`n修改者：hzhbest, MTpupil`n项目地址：https://github.com/MTpupil/winautohide`n`n主要功能：`n• 图形化设置界面`n• 托盘详细信息显示`n• 拖拽隐藏功能`n• 边缘指示器`n`n本程序及其源代码为公共领域。`n如需更多信息请联系原作者 BoD@JRAF.org
  return
  
  ; 保存设置
