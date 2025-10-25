@@ -26,10 +26,10 @@
  * 2025-08-06: v1.06: fixed window movement detection and taskbar issues
  * 2025-08-07: v1.07: fixed browser and console window border rendering issues
  * 2025-08-07: v1.1: added graphical settings interface, tray details, drag-to-hide, and edge indicators
- * 2025-05-25: v1.2: fixed multi-window interference bug for same application, improved fullscreen window detection, fixed same-app window switching logic
- * 2025-05-25: v1.2.1: fixed race condition in multi-window fast switching, implemented per-window state tracking
-
- * 2025-01-17: v1.2.3: Fix the bug in the drag-and-hide function, add a mouse release waiting mechanism to avoid drag conflicts
+ * 2025-10-25: v1.2: fixed multi-window interference bug for same application, improved fullscreen window detection, fixed same-app window switching logic
+ * 2025-10-25: v1.2.1: fixed race condition in multi-window fast switching, implemented per-window state tracking
+ * 2025-10-25: v1.2.3: Fix the bug in the drag-and-hide function, add a mouse release waiting mechanism to avoid drag conflicts
+ * 2025-10-25: v1.2.4: Enhanced exit handling - hidden windows are minimized instead of restored when program exits, added area detection for all directions to prevent indicator blocking
  */
 CoordMode, Mouse, Screen		;MouseGetPos relative to Screen
 #SingleInstance ignore
@@ -40,13 +40,17 @@ configFile := A_ScriptDir "\winautohide.ini"
 If (FileExist(configFile)) {
     IniRead, requireCtrl, %configFile%, Settings, RequireCtrl, 1 ; 默认启用
     IniRead, showTrayDetails, %configFile%, Settings, ShowTrayDetails, 0 ; 默认显示详细信息
-    IniRead, enableDragHide, %configFile%, Settings, EnableDragHide, 0 ; 默认启用拖拽隐藏
+    IniRead, enableDragHide, %configFile%, Settings, EnableDragHide, 1 ; 默认启用拖拽隐藏
     IniRead, showIndicators, %configFile%, Settings, ShowIndicators, 1 ; 默认显示边缘指示器
+    IniRead, indicatorColor, %configFile%, Settings, IndicatorColor, FF6B35 ; 默认橙红色
+    IniRead, indicatorStyle, %configFile%, Settings, IndicatorStyle, default ; 默认样式：default, minimal, full
 } else {
     requireCtrl := 1 ; 默认启用Ctrl要求
     showTrayDetails := 0 ; 默认显示详细信息
     enableDragHide := 1 ; 默认启用拖拽隐藏
     showIndicators := 1 ; 默认显示边缘指示器
+    indicatorColor := "FF6B35" ; 默认橙红色
+    indicatorStyle := "default" ; 默认样式：default, minimal, full
 }
 
 ; 初始化拖拽隐藏相关变量
@@ -96,6 +100,8 @@ Gosub, updateTrayTooltip
 ; 初始化指示器显示
 Gosub, updateIndicators
 
+; 注册退出处理程序，确保程序被强制关闭时也能正确处理隐藏窗口
+OnExit, handleExit
 
 return ; end of code that is to be executed on script start-up
 
@@ -125,30 +131,135 @@ createIndicator(winId, side) {
         winTitle := SubStr(winTitle, 1, 17) . "..."
     }
     
-    ; 计算指示器位置和尺寸
-    indicatorWidth := 4
-    indicatorHeight := 60
+    ; 获取窗口尺寸用于计算指示器位置
+    WinGetPos, winX, winY, winWidth, winHeight, ahk_id %winId%
+    
+    ; 根据指示器样式计算位置和尺寸
+    if (indicatorStyle = "minimal") {
+        ; 极简模式：只在窗口两端显示小点
+        createMinimalIndicator(winId, side, winTitle, winWidth, winHeight)
+    } else if (indicatorStyle = "full") {
+        ; 完整模式：显示窗口整条边
+        createFullIndicator(winId, side, winTitle, winWidth, winHeight)
+    } else {
+        ; 默认模式：显示中等长度的指示器
+        createDefaultIndicator(winId, side, winTitle, winWidth, winHeight)
+    }
+}
+
+; 创建极简样式指示器（只显示窗口两端）
+createMinimalIndicator(winId, side, winTitle, winWidth, winHeight) {
+    global
+    
+    ; 极简模式创建两个小指示器在窗口两端
+    if (side = "left") {
+        ; 左侧：在窗口顶部和底部各创建一个小点
+        createSingleIndicator(winId . "_1", 0, hidden_%winId%_y + 10, 6, 6, winTitle)
+        createSingleIndicator(winId . "_2", 0, hidden_%winId%_y + winHeight - 16, 6, 6, winTitle)
+    } else if (side = "right") {
+        ; 右侧：在窗口顶部和底部各创建一个小点
+        createSingleIndicator(winId . "_1", A_ScreenWidth - 6, hidden_%winId%_y + 10, 6, 6, winTitle)
+        createSingleIndicator(winId . "_2", A_ScreenWidth - 6, hidden_%winId%_y + winHeight - 16, 6, 6, winTitle)
+    } else if (side = "up") {
+        ; 顶部：在窗口左侧和右侧各创建一个小点
+        createSingleIndicator(winId . "_1", hidden_%winId%_x + 10, 0, 6, 6, winTitle)
+        createSingleIndicator(winId . "_2", hidden_%winId%_x + winWidth - 16, 0, 6, 6, winTitle)
+    } else if (side = "down") {
+        ; 底部：在窗口左侧和右侧各创建一个小点
+        createSingleIndicator(winId . "_1", hidden_%winId%_x + 10, A_ScreenHeight - 6, 6, 6, winTitle)
+        createSingleIndicator(winId . "_2", hidden_%winId%_x + winWidth - 16, A_ScreenHeight - 6, 6, 6, winTitle)
+    }
+    
+    ; 保存指示器信息
+    indicator_%winId%_exists := true
+    indicator_%winId%_side := side
+    indicator_%winId%_title := winTitle
+    indicator_%winId%_style := "minimal"
+}
+
+; 创建完整样式指示器（显示窗口整条边）
+createFullIndicator(winId, side, winTitle, winWidth, winHeight) {
+    global
+    
+    if (side = "left") {
+        ; 左侧：显示整个窗口高度
+        indicatorX := 0
+        indicatorY := hidden_%winId%_y
+        indicatorWidth := 4
+        indicatorHeight := winHeight
+    } else if (side = "right") {
+        ; 右侧：显示整个窗口高度
+        indicatorX := A_ScreenWidth - 4
+        indicatorY := hidden_%winId%_y
+        indicatorWidth := 4
+        indicatorHeight := winHeight
+    } else if (side = "up") {
+        ; 顶部：显示整个窗口宽度
+        indicatorX := hidden_%winId%_x
+        indicatorY := 0
+        indicatorWidth := winWidth
+        indicatorHeight := 4
+    } else if (side = "down") {
+        ; 底部：显示整个窗口宽度
+        indicatorX := hidden_%winId%_x
+        indicatorY := A_ScreenHeight - 4
+        indicatorWidth := winWidth
+        indicatorHeight := 4
+    }
+    
+    ; 确保指示器在屏幕范围内
+    if (indicatorX < 0) {
+        indicatorWidth += indicatorX
+        indicatorX := 0
+    }
+    if (indicatorY < 0) {
+        indicatorHeight += indicatorY
+        indicatorY := 0
+    }
+    if (indicatorX + indicatorWidth > A_ScreenWidth) {
+        indicatorWidth := A_ScreenWidth - indicatorX
+    }
+    if (indicatorY + indicatorHeight > A_ScreenHeight) {
+        indicatorHeight := A_ScreenHeight - indicatorY
+    }
+    
+    createSingleIndicator(winId, indicatorX, indicatorY, indicatorWidth, indicatorHeight, winTitle)
+    
+    ; 保存指示器信息
+    indicator_%winId%_exists := true
+    indicator_%winId%_side := side
+    indicator_%winId%_title := winTitle
+    indicator_%winId%_style := "full"
+}
+
+; 创建默认样式指示器（中等长度）
+createDefaultIndicator(winId, side, winTitle, winWidth, winHeight) {
+    global
+    
+    ; 默认指示器尺寸
+    defaultWidth := 4
+    defaultHeight := 60
     
     if (side = "left") {
         indicatorX := 0
         indicatorY := hidden_%winId%_y + 20  ; 在窗口隐藏位置附近显示
-        indicatorWidth := 4
-        indicatorHeight := 60
+        indicatorWidth := defaultWidth
+        indicatorHeight := defaultHeight
     } else if (side = "right") {
-        indicatorX := A_ScreenWidth - 4
+        indicatorX := A_ScreenWidth - defaultWidth
         indicatorY := hidden_%winId%_y + 20
-        indicatorWidth := 4
-        indicatorHeight := 60
+        indicatorWidth := defaultWidth
+        indicatorHeight := defaultHeight
     } else if (side = "up") {
         indicatorX := hidden_%winId%_x + 20
         indicatorY := 0
-        indicatorWidth := 60
-        indicatorHeight := 4
+        indicatorWidth := defaultHeight
+        indicatorHeight := defaultWidth
     } else if (side = "down") {
         indicatorX := hidden_%winId%_x + 20
-        indicatorY := A_ScreenHeight - 4
-        indicatorWidth := 60
-        indicatorHeight := 4
+        indicatorY := A_ScreenHeight - defaultWidth
+        indicatorWidth := defaultHeight
+        indicatorHeight := defaultWidth
     }
     
     ; 确保指示器在屏幕范围内
@@ -165,20 +276,28 @@ createIndicator(winId, side) {
         indicatorY := A_ScreenHeight - indicatorHeight
     }
     
-    ; 创建指示器GUI
-    Gui, Indicator%winId%:New, +AlwaysOnTop -Caption +ToolWindow +LastFound, WinAutoHide指示器
-    Gui, Indicator%winId%:Color, 0xFF6B35  ; 橙红色指示器
-    
-    ; 设置指示器窗口属性
-    WinSet, ExStyle, +0x20, % "ahk_id " . WinExist()  ; WS_EX_TRANSPARENT - 鼠标穿透
-    
-    ; 显示指示器
-    Gui, Indicator%winId%:Show, x%indicatorX% y%indicatorY% w%indicatorWidth% h%indicatorHeight% NoActivate
+    createSingleIndicator(winId, indicatorX, indicatorY, indicatorWidth, indicatorHeight, winTitle)
     
     ; 保存指示器信息
     indicator_%winId%_exists := true
     indicator_%winId%_side := side
     indicator_%winId%_title := winTitle
+    indicator_%winId%_style := "default"
+}
+
+; 创建单个指示器GUI
+createSingleIndicator(indicatorId, x, y, width, height, winTitle) {
+    global
+    
+    ; 创建指示器GUI
+    Gui, Indicator%indicatorId%:New, +AlwaysOnTop -Caption +ToolWindow +LastFound, WinAutoHide指示器
+    Gui, Indicator%indicatorId%:Color, %indicatorColor%  ; 使用自定义颜色
+    
+    ; 设置指示器窗口属性
+    WinSet, ExStyle, +0x20, % "ahk_id " . WinExist()  ; WS_EX_TRANSPARENT - 鼠标穿透
+    
+    ; 显示指示器
+    Gui, Indicator%indicatorId%:Show, x%x% y%y% w%width% h%height% NoActivate
     
     ; 设置指示器提示信息
     WinGet, indicatorHwnd, ID, WinAutoHide指示器
@@ -193,10 +312,21 @@ destroyIndicator(winId) {
     global
     
     if (indicator_%winId%_exists) {
-        Gui, Indicator%winId%:Destroy
+        ; 检查指示器样式，如果是极简模式需要销毁两个指示器
+        if (indicator_%winId%_style = "minimal") {
+            ; 极简模式：销毁两个小指示器
+            Gui, Indicator%winId%_1:Destroy
+            Gui, Indicator%winId%_2:Destroy
+        } else {
+            ; 默认和完整模式：销毁单个指示器
+            Gui, Indicator%winId%:Destroy
+        }
+        
+        ; 清除指示器信息
         indicator_%winId%_exists := false
         indicator_%winId%_side := ""
         indicator_%winId%_title := ""
+        indicator_%winId%_style := ""
     }
 }
 
@@ -459,19 +589,127 @@ menuUnautohideAll:
 return
 
 menuExit:
-    ; 清理所有指示器
+    ; 停止所有定时器
+    SetTimer, watchCursor, Off
+    SetTimer, checkDragHide, Off
+    SetTimer, waitForMouseRelease, Off
+    SetTimer, CloseToast, Off
+    
+    ; 清理热键
+    Hotkey, ^right, Off
+    Hotkey, ^left, Off
+    Hotkey, ^up, Off
+    Hotkey, ^down, Off
+    
+    ; 销毁GUI窗口
+    Gui, Settings:Destroy
+    Gui, Toast:Destroy
+    
+    ; 销毁所有指示器窗口并清理变量
+    Loop {
+        ; 尝试销毁指示器窗口
+        Gui, Indicator%A_Index%:Destroy
+        Gui, Indicator%A_Index%_1:Destroy
+        Gui, Indicator%A_Index%_2:Destroy
+        
+        ; 清理指示器相关变量
+        indicatorVisible_%A_Index% := ""
+        indicatorStyle_%A_Index% := ""
+        indicatorColor_%A_Index% := ""
+        
+        ; 如果连续10个窗口都不存在，则停止循环
+        if (A_Index > 100) {
+            break
+        }
+    }
+    
+    ; 取消所有窗口隐藏并最小化
+    Gosub, minimizeHiddenWindows
+    
+    ; 获取当前进程ID并强制退出
+    Process, Exist
+    currentPID := ErrorLevel
+    Run, taskkill /f /pid %currentPID%, , Hide
+return
+
+; 将所有隐藏的窗口最小化（退出时使用）
+minimizeHiddenWindows:
     Loop, Parse, autohideWindows, `,
     {
         curWinId := A_LoopField
-        if (curWinId != "" && indicator_%curWinId%_exists) {
+        if (curWinId != "" && autohide_%curWinId%) {
+            ; 获取窗口的PID用于完整的清理操作
+            WinGet curWinPid, PID, ahk_id %curWinId%
+            
+            ; 清理相关变量
+            autohide_%curWinId% := false
+            autohide_%curWinPid% := false
+            showing_%curWinId% := false
+            hideArea_%curWinId%_active := false
+            
+            ; 恢复窗口的工作状态（调用 unworkWindow 逻辑）
+            Gosub, unworkWindow
+            
+            ; 如果窗口是隐藏状态，先恢复到原位置再最小化
+            if (hidden_%curWinId%) {
+                WinMove, ahk_id %curWinId%, , orig_%curWinId%_x, orig_%curWinId%_y
+            }
+            
+            ; 将窗口最小化
+            WinMinimize, ahk_id %curWinId%
+            hidden_%curWinId% := false
+            
+            ; 销毁边缘指示器
             destroyIndicator(curWinId)
+            
+            ; 清除所有相关变量
+            originalExStyle_%curWinId% := ""
+            originalStyle_%curWinId% := ""
+            orig_%curWinId%_x := ""
+            orig_%curWinId%_y := ""
+            showing_%curWinId%_x := ""
+            showing_%curWinId%_y := ""
         }
     }
-    Gosub, menuUnautohideAll
-    ExitApp
+    ; 清空窗口列表
+    autohideWindows := ""
 return
 
-
+; 处理程序退出时的清理工作（包括被强制关闭的情况）
+handleExit:
+    ; 停止所有定时器
+    SetTimer, watchCursor, Off
+    SetTimer, checkDragHide, Off
+    SetTimer, waitForMouseRelease, Off
+    SetTimer, CloseToast, Off
+    
+    ; 清理所有热键
+    Hotkey, ^right, Off
+    Hotkey, ^left, Off
+    Hotkey, ^up, Off
+    Hotkey, ^down, Off
+    
+    ; 销毁所有GUI窗口
+    Gui, Settings:Destroy
+    Gui, Toast:Destroy
+    
+    ; 清理所有指示器（包括销毁指示器GUI窗口）
+    Loop, Parse, autohideWindows, `,
+    {
+        curWinId := A_LoopField
+        if (curWinId != "") {
+            ; 销毁指示器GUI窗口
+            Gui, Indicator%curWinId%:Destroy
+            Gui, Indicator%curWinId%_1:Destroy
+            Gui, Indicator%curWinId%_2:Destroy
+            ; 清理指示器变量
+            indicator_%curWinId%_exists := false
+        }
+    }
+    
+    ; 将隐藏的窗口最小化（包含指示器清理）
+    Gosub, minimizeHiddenWindows
+return
 
 /*
  * 检测窗口是否为全屏状态
@@ -694,7 +932,13 @@ toggleWindow:
             prehid_%curWinId%_y := orig_%curWinId%_y
             hidden_%curWinId%_x := A_ScreenWidth - 1
             hidden_%curWinId%_y := orig_%curWinId%_y
-            hideArea_%curWinId%_active := false  ; 右侧隐藏不使用区域检测
+            
+            ; 设置右侧隐藏区域检测坐标（鼠标检测区域）
+            hideArea_%curWinId%_left := A_ScreenWidth - 5  ; 右侧5像素区域用于检测
+            hideArea_%curWinId%_right := A_ScreenWidth
+            hideArea_%curWinId%_top := orig_%curWinId%_y
+            hideArea_%curWinId%_bottom := orig_%curWinId%_y + height
+            hideArea_%curWinId%_active := true  ; 启用区域检测
         } else if (mode = "left") {
             showing_%curWinId%_x := 0
             showing_%curWinId%_y := orig_%curWinId%_y
@@ -702,7 +946,13 @@ toggleWindow:
             prehid_%curWinId%_y := orig_%curWinId%_y
             hidden_%curWinId%_x := -width + 1
             hidden_%curWinId%_y := orig_%curWinId%_y
-            hideArea_%curWinId%_active := false  ; 左侧隐藏不使用区域检测
+            
+            ; 设置左侧隐藏区域检测坐标（鼠标检测区域）
+            hideArea_%curWinId%_left := 0
+            hideArea_%curWinId%_right := 5  ; 左侧5像素区域用于检测
+            hideArea_%curWinId%_top := orig_%curWinId%_y
+            hideArea_%curWinId%_bottom := orig_%curWinId%_y + height
+            hideArea_%curWinId%_active := true  ; 启用区域检测
         } else if (mode = "up") {
             showing_%curWinId%_x := orig_%curWinId%_x
             showing_%curWinId%_y := 0
@@ -710,7 +960,13 @@ toggleWindow:
             prehid_%curWinId%_y := -height + 51
             hidden_%curWinId%_x := orig_%curWinId%_x
             hidden_%curWinId%_y := -height + 1
-            hideArea_%curWinId%_active := false  ; 顶部隐藏不使用区域检测
+            
+            ; 设置顶部隐藏区域检测坐标（鼠标检测区域）
+            hideArea_%curWinId%_left := orig_%curWinId%_x
+            hideArea_%curWinId%_right := orig_%curWinId%_x + width
+            hideArea_%curWinId%_top := 0
+            hideArea_%curWinId%_bottom := 5  ; 顶部5像素区域用于检测
+            hideArea_%curWinId%_active := true  ; 启用区域检测
         } else { ; down - 底部隐藏，使用区域检测方式
             showing_%curWinId%_x := orig_%curWinId%_x
             showing_%curWinId%_y := A_ScreenHeight - height  ; 显示位置在屏幕底部
@@ -913,17 +1169,24 @@ Gui, Settings:Add, Checkbox, x40 y80 w250 h20 vShowTrayDetails gUpdateTrayDetail
 Gui, Settings:Add, Checkbox, x40 y110 w250 h20 vEnableDragHide gUpdateDragHideSetting, 启用拖拽隐藏功能
 Gui, Settings:Add, Checkbox, x40 y140 w250 h20 vShowIndicators gUpdateIndicatorsSetting, 显示边缘指示器
     
+    ; 指示器自定义设置
+    Gui, Settings:Add, Text, x60 y170 w100 h20, 指示器样式：
+    Gui, Settings:Add, DropDownList, x160 y168 w120 vIndicatorStyle gUpdateIndicatorStyle, 默认|极简|完整
+    
+    Gui, Settings:Add, Text, x60 y200 w100 h20, 指示器颜色：
+    Gui, Settings:Add, DropDownList, x160 y198 w120 vIndicatorColor gUpdateIndicatorColor, 橙红色|蓝色|绿色|紫色|红色|黄色
+    
     ; 添加分隔线
-    Gui, Settings:Add, Text, x20 y170 w300 h1 0x10 ; SS_ETCHEDHORZ
+    Gui, Settings:Add, Text, x20 y230 w300 h1 0x10 ; SS_ETCHEDHORZ
     
     ; 使用说明区域
-    Gui, Settings:Add, Text, x20 y190 w300 h20, 使用说明：
-    Gui, Settings:Add, Text, x40 y220 w280 h90, 使用快捷键 Ctrl+方向键 将当前窗口隐藏到屏幕边缘。`n将鼠标移动到边缘即可显示隐藏窗口。`n移动已显示的隐藏窗口将取消自动隐藏。`n启用拖拽隐藏后，按住Ctrl拖拽到边缘也可隐藏。`n边缘指示器会在有隐藏窗口的位置显示橙色条。
+    Gui, Settings:Add, Text, x20 y250 w300 h20, 使用说明：
+    Gui, Settings:Add, Text, x40 y280 w280 h90, 使用快捷键 Ctrl+方向键 将当前窗口隐藏到屏幕边缘。`n将鼠标移动到边缘即可显示隐藏窗口。`n移动已显示的隐藏窗口将取消自动隐藏。`n启用拖拽隐藏后，按住Ctrl拖拽到边缘也可隐藏。`n边缘指示器会在有隐藏窗口的位置显示指示条。
     
     ; 按钮区域
-    Gui, Settings:Add, Button, x40 y330 w80 h30 gShowAbout, 关于
-Gui, Settings:Add, Button, x140 y330 w80 h30 gSaveSettings, 保存
-Gui, Settings:Add, Button, x240 y330 w80 h30 gCloseSettings, 关闭
+    Gui, Settings:Add, Button, x40 y390 w80 h30 gShowAbout, 关于
+Gui, Settings:Add, Button, x140 y390 w80 h30 gSaveSettings, 保存
+Gui, Settings:Add, Button, x240 y390 w80 h30 gCloseSettings, 关闭
     
     ; 设置复选框状态
     GuiControl, Settings:, CtrlRequired, %requireCtrl%
@@ -931,16 +1194,41 @@ Gui, Settings:Add, Button, x240 y330 w80 h30 gCloseSettings, 关闭
     GuiControl, Settings:, EnableDragHide, %enableDragHide%
     GuiControl, Settings:, ShowIndicators, %showIndicators%
     
+    ; 设置下拉列表的默认值
+    ; 设置指示器样式下拉列表
+    if (indicatorStyle = "minimal") {
+        GuiControl, Settings:Choose, IndicatorStyle, 2  ; 极简
+    } else if (indicatorStyle = "full") {
+        GuiControl, Settings:Choose, IndicatorStyle, 3  ; 完整
+    } else {
+        GuiControl, Settings:Choose, IndicatorStyle, 1  ; 默认
+    }
+    
+    ; 设置指示器颜色下拉列表
+    if (indicatorColor = "0066CC") {
+        GuiControl, Settings:Choose, IndicatorColor, 2  ; 蓝色
+    } else if (indicatorColor = "00AA00") {
+        GuiControl, Settings:Choose, IndicatorColor, 3  ; 绿色
+    } else if (indicatorColor = "9900CC") {
+        GuiControl, Settings:Choose, IndicatorColor, 4  ; 紫色
+    } else if (indicatorColor = "FF0000") {
+        GuiControl, Settings:Choose, IndicatorColor, 5  ; 红色
+    } else if (indicatorColor = "FFCC00") {
+        GuiControl, Settings:Choose, IndicatorColor, 6  ; 黄色
+    } else {
+        GuiControl, Settings:Choose, IndicatorColor, 1  ; 橙红色（默认）
+    }
+    
     ; 显示设置窗口
-    Gui, Settings:Show, w360 h380, WinAutoHide 设置
+    Gui, Settings:Show, w360 h440, WinAutoHide 设置
 return
 
 ; 实时更新Ctrl设置
 UpdateCtrlSetting:
-    Gui, Settings:Submit, NoHide
-    requireCtrl := CtrlRequired
-    enableDragHide := EnableDragHide
-    showIndicators := ShowIndicators
+    ; 获取各个复选框的状态
+    GuiControlGet, requireCtrl, Settings:, CtrlRequired
+    GuiControlGet, enableDragHide, Settings:, EnableDragHide
+    GuiControlGet, showIndicators, Settings:, ShowIndicators
     
     ; 更新托盘菜单状态
     if (requireCtrl) {
@@ -965,9 +1253,9 @@ return
 
 ; 实时更新托盘详细信息设置
 UpdateTrayDetailsSetting:
-    Gui, Settings:Submit, NoHide
-    showTrayDetails := ShowTrayDetails
-    showIndicators := ShowIndicators
+    ; 获取复选框的状态
+    GuiControlGet, showTrayDetails, Settings:, ShowTrayDetails
+    GuiControlGet, showIndicators, Settings:, ShowIndicators
     
     ; 更新指示器显示
     Gosub, updateIndicators
@@ -995,10 +1283,76 @@ UpdateDragHideSetting:
     Gosub, updateIndicators
 return
 
+; 更新指示器样式设置
+UpdateIndicatorStyle:
+    ; 获取指示器样式下拉列表的值
+    GuiControlGet, SelectedStyle, Settings:, IndicatorStyle
+    
+    ; 根据选择更新指示器样式
+    if (SelectedStyle = "极简") {
+        indicatorStyle := "minimal"
+    } else if (SelectedStyle = "完整") {
+        indicatorStyle := "full"
+    } else {
+        indicatorStyle := "default"
+    }
+    
+    ; 保存设置到配置文件
+    IniWrite, %indicatorStyle%, %configFile%, Settings, IndicatorStyle
+    
+    ; 重新创建所有指示器以应用新样式
+    ; 先销毁所有现有指示器
+    Loop, Parse, autohideWindows, `,
+    {
+        curWinId := A_LoopField
+        if (curWinId != "" && indicator_%curWinId%_exists) {
+            destroyIndicator(curWinId)
+        }
+    }
+    ; 然后重新创建指示器
+    Gosub, updateIndicators
+return
+
+; 更新指示器颜色设置
+UpdateIndicatorColor:
+    ; 获取指示器颜色下拉列表的值
+    GuiControlGet, SelectedColor, Settings:, IndicatorColor
+    
+    ; 根据选择更新指示器颜色
+    if (SelectedColor = "蓝色") {
+        indicatorColor := "0066CC"
+    } else if (SelectedColor = "绿色") {
+        indicatorColor := "00AA00"
+    } else if (SelectedColor = "紫色") {
+        indicatorColor := "9900CC"
+    } else if (SelectedColor = "红色") {
+        indicatorColor := "FF0000"
+    } else if (SelectedColor = "黄色") {
+        indicatorColor := "FFCC00"
+    } else {
+        indicatorColor := "FF6B35"  ; 橙红色（默认）
+    }
+    
+    ; 保存设置到配置文件
+    IniWrite, %indicatorColor%, %configFile%, Settings, IndicatorColor
+    
+    ; 重新创建所有指示器以应用新颜色
+    ; 先销毁所有现有指示器
+    Loop, Parse, autohideWindows, `,
+    {
+        curWinId := A_LoopField
+        if (curWinId != "" && indicator_%curWinId%_exists) {
+            destroyIndicator(curWinId)
+        }
+    }
+    ; 然后重新创建指示器
+    Gosub, updateIndicators
+return
+
 ; 实时更新指示器设置
 UpdateIndicatorsSetting:
-    Gui, Settings:Submit, NoHide
-    showIndicators := ShowIndicators
+    ; 获取指示器显示复选框的状态
+    GuiControlGet, showIndicators, Settings:, ShowIndicators
     
     ; 更新指示器显示
     Gosub, updateIndicators
@@ -1017,11 +1371,38 @@ return
        enableDragHide := EnableDragHide
        showIndicators := ShowIndicators
        
+       ; 获取下拉列表的值并转换为配置值
+       ; 处理指示器样式
+       if (IndicatorStyle = "极简") {
+           indicatorStyle := "minimal"
+       } else if (IndicatorStyle = "完整") {
+           indicatorStyle := "full"
+       } else {
+           indicatorStyle := "default"
+       }
+       
+       ; 处理指示器颜色
+       if (IndicatorColor = "蓝色") {
+           indicatorColor := "0066CC"
+       } else if (IndicatorColor = "绿色") {
+           indicatorColor := "00AA00"
+       } else if (IndicatorColor = "紫色") {
+           indicatorColor := "9900CC"
+       } else if (IndicatorColor = "红色") {
+           indicatorColor := "FF0000"
+       } else if (IndicatorColor = "黄色") {
+           indicatorColor := "FFCC00"
+       } else {
+           indicatorColor := "FF6B35"  ; 橙红色（默认）
+       }
+       
        ; 保存设置到配置文件
        IniWrite, %requireCtrl%, %configFile%, Settings, RequireCtrl
        IniWrite, %showTrayDetails%, %configFile%, Settings, ShowTrayDetails
        IniWrite, %enableDragHide%, %configFile%, Settings, EnableDragHide
        IniWrite, %showIndicators%, %configFile%, Settings, ShowIndicators
+       IniWrite, %indicatorColor%, %configFile%, Settings, IndicatorColor
+       IniWrite, %indicatorStyle%, %configFile%, Settings, IndicatorStyle
       
       ; 更新托盘菜单状态
       If (requireCtrl = 1) {
