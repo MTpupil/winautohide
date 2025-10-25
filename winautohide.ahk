@@ -43,7 +43,8 @@ If (FileExist(configFile)) {
     IniRead, enableDragHide, %configFile%, Settings, EnableDragHide, 1 ; 默认启用拖拽隐藏
     IniRead, showIndicators, %configFile%, Settings, ShowIndicators, 1 ; 默认显示边缘指示器
     IniRead, indicatorColor, %configFile%, Settings, IndicatorColor, FF6B35 ; 默认橙红色
-    IniRead, indicatorStyle, %configFile%, Settings, IndicatorStyle, default ; 默认样式：default, minimal, full
+IniRead, indicatorStyle, %configFile%, Settings, IndicatorStyle, default ; 默认样式：default, minimal, full
+IniRead, indicatorWidth, %configFile%, Settings, IndicatorWidth, 4 ; 默认指示器宽度：4像素
 } else {
     requireCtrl := 1 ; 默认启用Ctrl要求
     showTrayDetails := 0 ; 默认显示详细信息
@@ -152,22 +153,31 @@ createMinimalIndicator(winId, side, winTitle, winWidth, winHeight) {
     global
     
     ; 极简模式创建两个小指示器在窗口两端
+    ; 使用自定义宽度，但最小为4像素，最大为10像素
+    minimalSize := indicatorWidth + 2
+    if (minimalSize < 4) {
+        minimalSize := 4
+    }
+    if (minimalSize > 10) {
+        minimalSize := 10
+    }
+    
     if (side = "left") {
         ; 左侧：在窗口顶部和底部各创建一个小点
-        createSingleIndicator(winId . "_1", 0, hidden_%winId%_y + 10, 6, 6, winTitle)
-        createSingleIndicator(winId . "_2", 0, hidden_%winId%_y + winHeight - 16, 6, 6, winTitle)
+        createSingleIndicator(winId . "_1", 0, hidden_%winId%_y + 10, minimalSize, minimalSize, winTitle)
+        createSingleIndicator(winId . "_2", 0, hidden_%winId%_y + winHeight - minimalSize - 10, minimalSize, minimalSize, winTitle)
     } else if (side = "right") {
         ; 右侧：在窗口顶部和底部各创建一个小点
-        createSingleIndicator(winId . "_1", A_ScreenWidth - 6, hidden_%winId%_y + 10, 6, 6, winTitle)
-        createSingleIndicator(winId . "_2", A_ScreenWidth - 6, hidden_%winId%_y + winHeight - 16, 6, 6, winTitle)
+        createSingleIndicator(winId . "_1", A_ScreenWidth - minimalSize, hidden_%winId%_y + 10, minimalSize, minimalSize, winTitle)
+        createSingleIndicator(winId . "_2", A_ScreenWidth - minimalSize, hidden_%winId%_y + winHeight - minimalSize - 10, minimalSize, minimalSize, winTitle)
     } else if (side = "up") {
         ; 顶部：在窗口左侧和右侧各创建一个小点
-        createSingleIndicator(winId . "_1", hidden_%winId%_x + 10, 0, 6, 6, winTitle)
-        createSingleIndicator(winId . "_2", hidden_%winId%_x + winWidth - 16, 0, 6, 6, winTitle)
+        createSingleIndicator(winId . "_1", hidden_%winId%_x + 10, 0, minimalSize, minimalSize, winTitle)
+        createSingleIndicator(winId . "_2", hidden_%winId%_x + winWidth - minimalSize - 10, 0, minimalSize, minimalSize, winTitle)
     } else if (side = "down") {
         ; 底部：在窗口左侧和右侧各创建一个小点
-        createSingleIndicator(winId . "_1", hidden_%winId%_x + 10, A_ScreenHeight - 6, 6, 6, winTitle)
-        createSingleIndicator(winId . "_2", hidden_%winId%_x + winWidth - 16, A_ScreenHeight - 6, 6, 6, winTitle)
+        createSingleIndicator(winId . "_1", hidden_%winId%_x + 10, A_ScreenHeight - minimalSize, minimalSize, minimalSize, winTitle)
+        createSingleIndicator(winId . "_2", hidden_%winId%_x + winWidth - minimalSize - 10, A_ScreenHeight - minimalSize, minimalSize, minimalSize, winTitle)
     }
     
     ; 保存指示器信息
@@ -185,45 +195,45 @@ createFullIndicator(winId, side, winTitle, winWidth, winHeight) {
         ; 左侧：显示整个窗口高度
         indicatorX := 0
         indicatorY := hidden_%winId%_y
-        indicatorWidth := 4
-        indicatorHeight := winHeight
+        indicatorW := indicatorWidth
+        indicatorH := winHeight
     } else if (side = "right") {
         ; 右侧：显示整个窗口高度
-        indicatorX := A_ScreenWidth - 4
+        indicatorX := A_ScreenWidth - indicatorWidth
         indicatorY := hidden_%winId%_y
-        indicatorWidth := 4
-        indicatorHeight := winHeight
+        indicatorW := indicatorWidth
+        indicatorH := winHeight
     } else if (side = "up") {
         ; 顶部：显示整个窗口宽度
         indicatorX := hidden_%winId%_x
         indicatorY := 0
-        indicatorWidth := winWidth
-        indicatorHeight := 4
+        indicatorW := winWidth
+        indicatorH := indicatorWidth
     } else if (side = "down") {
         ; 底部：显示整个窗口宽度
         indicatorX := hidden_%winId%_x
-        indicatorY := A_ScreenHeight - 4
-        indicatorWidth := winWidth
-        indicatorHeight := 4
+        indicatorY := A_ScreenHeight - indicatorWidth
+        indicatorW := winWidth
+        indicatorH := indicatorWidth
     }
     
     ; 确保指示器在屏幕范围内
     if (indicatorX < 0) {
-        indicatorWidth += indicatorX
+        indicatorW += indicatorX
         indicatorX := 0
     }
     if (indicatorY < 0) {
-        indicatorHeight += indicatorY
+        indicatorH += indicatorY
         indicatorY := 0
     }
-    if (indicatorX + indicatorWidth > A_ScreenWidth) {
-        indicatorWidth := A_ScreenWidth - indicatorX
+    if (indicatorX + indicatorW > A_ScreenWidth) {
+        indicatorW := A_ScreenWidth - indicatorX
     }
-    if (indicatorY + indicatorHeight > A_ScreenHeight) {
-        indicatorHeight := A_ScreenHeight - indicatorY
+    if (indicatorY + indicatorH > A_ScreenHeight) {
+        indicatorH := A_ScreenHeight - indicatorY
     }
     
-    createSingleIndicator(winId, indicatorX, indicatorY, indicatorWidth, indicatorHeight, winTitle)
+    createSingleIndicator(winId, indicatorX, indicatorY, indicatorW, indicatorH, winTitle)
     
     ; 保存指示器信息
     indicator_%winId%_exists := true
@@ -236,30 +246,30 @@ createFullIndicator(winId, side, winTitle, winWidth, winHeight) {
 createDefaultIndicator(winId, side, winTitle, winWidth, winHeight) {
     global
     
-    ; 默认指示器尺寸
-    defaultWidth := 4
+    ; 使用自定义指示器宽度
+    defaultWidth := indicatorWidth
     defaultHeight := 60
     
     if (side = "left") {
         indicatorX := 0
         indicatorY := hidden_%winId%_y + 20  ; 在窗口隐藏位置附近显示
-        indicatorWidth := defaultWidth
-        indicatorHeight := defaultHeight
+        indicatorW := defaultWidth
+        indicatorH := defaultHeight
     } else if (side = "right") {
         indicatorX := A_ScreenWidth - defaultWidth
         indicatorY := hidden_%winId%_y + 20
-        indicatorWidth := defaultWidth
-        indicatorHeight := defaultHeight
+        indicatorW := defaultWidth
+        indicatorH := defaultHeight
     } else if (side = "up") {
         indicatorX := hidden_%winId%_x + 20
         indicatorY := 0
-        indicatorWidth := defaultHeight
-        indicatorHeight := defaultWidth
+        indicatorW := defaultHeight
+        indicatorH := defaultWidth
     } else if (side = "down") {
         indicatorX := hidden_%winId%_x + 20
         indicatorY := A_ScreenHeight - defaultWidth
-        indicatorWidth := defaultHeight
-        indicatorHeight := defaultWidth
+        indicatorW := defaultHeight
+        indicatorH := defaultWidth
     }
     
     ; 确保指示器在屏幕范围内
@@ -269,14 +279,14 @@ createDefaultIndicator(winId, side, winTitle, winWidth, winHeight) {
     if (indicatorY < 0) {
         indicatorY := 0
     }
-    if (indicatorX + indicatorWidth > A_ScreenWidth) {
-        indicatorX := A_ScreenWidth - indicatorWidth
+    if (indicatorX + indicatorW > A_ScreenWidth) {
+        indicatorX := A_ScreenWidth - indicatorW
     }
-    if (indicatorY + indicatorHeight > A_ScreenHeight) {
-        indicatorY := A_ScreenHeight - indicatorHeight
+    if (indicatorY + indicatorH > A_ScreenHeight) {
+        indicatorY := A_ScreenHeight - indicatorH
     }
     
-    createSingleIndicator(winId, indicatorX, indicatorY, indicatorWidth, indicatorHeight, winTitle)
+    createSingleIndicator(winId, indicatorX, indicatorY, indicatorW, indicatorH, winTitle)
     
     ; 保存指示器信息
     indicator_%winId%_exists := true
@@ -1176,23 +1186,31 @@ Gui, Settings:Add, Checkbox, x40 y140 w250 h20 vShowIndicators gUpdateIndicators
     Gui, Settings:Add, Text, x60 y200 w100 h20, 指示器颜色：
     Gui, Settings:Add, DropDownList, x160 y198 w120 vIndicatorColor gUpdateIndicatorColor, 橙红色|蓝色|绿色|紫色|红色|黄色
     
+    Gui, Settings:Add, Text, x60 y230 w100 h20, 指示器宽度：
+    Gui, Settings:Add, Slider, x160 y228 w120 h20 vIndicatorWidth gUpdateIndicatorWidth Range1-10 TickInterval1
+    Gui, Settings:Add, Text, x290 y230 w30 h20 vIndicatorWidthText, %indicatorWidth%px
+    
     ; 添加分隔线
-    Gui, Settings:Add, Text, x20 y230 w300 h1 0x10 ; SS_ETCHEDHORZ
+    Gui, Settings:Add, Text, x20 y260 w300 h1 0x10 ; SS_ETCHEDHORZ
     
     ; 使用说明区域
-    Gui, Settings:Add, Text, x20 y250 w300 h20, 使用说明：
-    Gui, Settings:Add, Text, x40 y280 w280 h90, 使用快捷键 Ctrl+方向键 将当前窗口隐藏到屏幕边缘。`n将鼠标移动到边缘即可显示隐藏窗口。`n移动已显示的隐藏窗口将取消自动隐藏。`n启用拖拽隐藏后，按住Ctrl拖拽到边缘也可隐藏。`n边缘指示器会在有隐藏窗口的位置显示指示条。
+    Gui, Settings:Add, Text, x20 y280 w300 h20, 使用说明：
+    Gui, Settings:Add, Text, x40 y310 w280 h90, 使用快捷键 Ctrl+方向键 将当前窗口隐藏到屏幕边缘。`n将鼠标移动到边缘即可显示隐藏窗口。`n移动已显示的隐藏窗口将取消自动隐藏。`n启用拖拽隐藏后，按住Ctrl拖拽到边缘也可隐藏。`n边缘指示器会在有隐藏窗口的位置显示指示条。
     
     ; 按钮区域
-    Gui, Settings:Add, Button, x40 y390 w80 h30 gShowAbout, 关于
-Gui, Settings:Add, Button, x140 y390 w80 h30 gSaveSettings, 保存
-Gui, Settings:Add, Button, x240 y390 w80 h30 gCloseSettings, 关闭
+    Gui, Settings:Add, Button, x40 y420 w80 h30 gShowAbout, 关于
+Gui, Settings:Add, Button, x140 y420 w80 h30 gSaveSettings, 保存
+Gui, Settings:Add, Button, x240 y420 w80 h30 gCloseSettings, 关闭
     
     ; 设置复选框状态
     GuiControl, Settings:, CtrlRequired, %requireCtrl%
     GuiControl, Settings:, ShowTrayDetails, %showTrayDetails%
     GuiControl, Settings:, EnableDragHide, %enableDragHide%
     GuiControl, Settings:, ShowIndicators, %showIndicators%
+    
+    ; 设置指示器宽度滑块的值
+    GuiControl, Settings:, IndicatorWidth, %indicatorWidth%
+    GuiControl, Settings:, IndicatorWidthText, %indicatorWidth%px
     
     ; 设置下拉列表的默认值
     ; 设置指示器样式下拉列表
@@ -1349,6 +1367,33 @@ UpdateIndicatorColor:
     Gosub, updateIndicators
 return
 
+; 更新指示器宽度设置
+UpdateIndicatorWidth:
+    ; 获取指示器宽度滑块的值
+    GuiControlGet, newWidth, Settings:, IndicatorWidth
+    
+    ; 更新指示器宽度变量
+    indicatorWidth := newWidth
+    
+    ; 更新显示文本
+    GuiControl, Settings:, IndicatorWidthText, %indicatorWidth%px
+    
+    ; 保存设置到配置文件
+    IniWrite, %indicatorWidth%, %configFile%, Settings, IndicatorWidth
+    
+    ; 重新创建所有指示器以应用新宽度
+    ; 先销毁所有现有指示器
+    Loop, Parse, autohideWindows, `,
+    {
+        curWinId := A_LoopField
+        if (curWinId != "" && indicator_%curWinId%_exists) {
+            destroyIndicator(curWinId)
+        }
+    }
+    ; 然后重新创建指示器
+    Gosub, updateIndicators
+return
+
 ; 实时更新指示器设置
 UpdateIndicatorsSetting:
     ; 获取指示器显示复选框的状态
@@ -1396,6 +1441,9 @@ return
            indicatorColor := "FF6B35"  ; 橙红色（默认）
        }
        
+       ; 获取指示器宽度滑块的值
+       GuiControlGet, indicatorWidth, Settings:, IndicatorWidth
+       
        ; 保存设置到配置文件
        IniWrite, %requireCtrl%, %configFile%, Settings, RequireCtrl
        IniWrite, %showTrayDetails%, %configFile%, Settings, ShowTrayDetails
@@ -1403,6 +1451,7 @@ return
        IniWrite, %showIndicators%, %configFile%, Settings, ShowIndicators
        IniWrite, %indicatorColor%, %configFile%, Settings, IndicatorColor
        IniWrite, %indicatorStyle%, %configFile%, Settings, IndicatorStyle
+       IniWrite, %indicatorWidth%, %configFile%, Settings, IndicatorWidth
       
       ; 更新托盘菜单状态
       If (requireCtrl = 1) {
