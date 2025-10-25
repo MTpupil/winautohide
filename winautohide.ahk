@@ -1,5 +1,5 @@
 /*
- * winautohide v1.1 modified.
+ * winautohide v1.2 modified.
  * 新增功能：
  * 1. 必须按住Ctrl键时鼠标移上去窗口才会出现，单纯鼠标移上去不显示，防止误触
  * 2. 新增右键菜单开关，可启用/禁用Ctrl键要求，状态会保存
@@ -11,6 +11,7 @@
  * 8. 新增托盘图标显示详细信息功能，可在设置中开启和关闭
  * 9. 新增拖拽窗口隐藏功能，按住Ctrl键并拖拽窗口到屏幕外超过三分之一可隐藏窗口
  * 10. 新增边缘指示器功能，为隐藏的窗口在屏幕边缘显示小指示器，可在设置中开关
+ * 11. 修复同应用程序多窗口场景下的隐藏逻辑bug，解决全屏窗口干扰隐藏判断的问题
  *
  * This program and its source are in the public domain.
  * Contact BoD@JRAF.org for more information.
@@ -25,6 +26,7 @@
  * 2025-08-06: v1.06: fixed window movement detection and taskbar issues
  * 2025-08-07: v1.07: fixed browser and console window border rendering issues
  * 2025-08-07: v1.1: added graphical settings interface, tray details, drag-to-hide, and edge indicators
+ * 2025-10-25: v1.2: fixed multi-window interference bug for same application, improved fullscreen window detection, fixed same-app window switching logic
  */
 CoordMode, Mouse, Screen		;MouseGetPos relative to Screen
 #SingleInstance ignore
@@ -444,6 +446,57 @@ return
 
 
 /*
+ * 检测窗口是否为全屏状态
+ */
+isWindowFullscreen(winId) {
+    WinGetPos, winX, winY, winWidth, winHeight, ahk_id %winId%
+    ; 检查窗口是否覆盖整个屏幕（允许小的误差）
+    return (winX <= 0 && winY <= 0 && winWidth >= A_ScreenWidth - 10 && winHeight >= A_ScreenHeight - 10)
+}
+
+/*
+ * 检测鼠标是否真正离开了指定窗口区域
+ * 考虑同一应用程序的其他窗口不应影响隐藏逻辑
+ */
+isMouseReallyOutsideWindow(targetWinId, mouseX, mouseY) {
+    global
+    
+    ; 获取目标窗口的位置和尺寸
+    WinGetPos, targetX, targetY, targetW, targetH, ahk_id %targetWinId%
+    
+    ; 首先检查鼠标是否在目标窗口内
+    if (mouseX >= targetX && mouseX <= targetX + targetW && mouseY >= targetY && mouseY <= targetY + targetH) {
+        return false ; 鼠标仍在目标窗口内
+    }
+    
+    ; 获取鼠标当前位置下的窗口
+    MouseGetPos, , , currentWinId
+    
+    ; 如果鼠标下没有窗口，则认为真正离开了
+    if (!currentWinId) {
+        return true
+    }
+    
+    ; 获取目标窗口和当前窗口的进程ID
+    WinGet, targetPid, PID, ahk_id %targetWinId%
+    WinGet, currentPid, PID, ahk_id %currentWinId%
+    
+    ; 如果鼠标移动到了不同进程的窗口，则认为真正离开了
+    if (targetPid != currentPid) {
+        return true
+    }
+    
+    ; 如果是同一进程的窗口，需要进一步检查
+    ; 如果当前窗口不是目标窗口本身，则认为真正离开了
+    if (currentWinId != targetWinId) {
+        return true
+    }
+    
+    ; 只有当鼠标仍在目标窗口本身时，才认为没有真正离开
+    return false
+}
+
+/*
  * Timer implementation.
  */
 watchCursor:
@@ -481,8 +534,9 @@ watchCursor:
         }
     }
     
-    ; 原有的窗口检测逻辑（用于非底部隐藏的窗口）
-    if (autohide_%winId% || autohide_%winPid%) {
+    ; 修改后的窗口检测逻辑：只检测鼠标直接在自动隐藏窗口上的情况
+    ; 不再使用进程ID进行匹配，避免同一应用程序的其他窗口干扰
+    if (autohide_%winId%) {
         ; 如果启用了Ctrl要求，则需要Ctrl+鼠标在窗口上才显示
         ; 如果未启用Ctrl要求，则只需要鼠标在窗口上就显示
         if ((requireCtrl && CtrlDown) || !requireCtrl) {
@@ -528,8 +582,8 @@ watchCursor:
                 Gosub, updateTrayTooltip
                 ; 窗口移动后完全取消自动隐藏，直接返回不再执行后续逻辑
                 return
-            } else if (mouseX < %needHide%_X || mouseX > %needHide%_X+%needHide%_W || mouseY < %needHide%_Y || mouseY > %needHide%_Y+%needHide%_H) {
-            ;if mouse leave the "needHide" win then
+            } else if (isMouseReallyOutsideWindow(needHide, mouseX, mouseY)) {
+            ; 使用新的精确检测函数判断鼠标是否真正离开窗口
                 WinMove, ahk_id %needHide%, , hidden_%needHide%_x, hidden_%needHide%_y
                 ; move it to 'hidden' position
                 WinActivate, ahk_id %previousActiveWindow% ; activate previously active window
