@@ -1,5 +1,5 @@
 /*
- * winautohide v1.2 modified.
+ * winautohide v1.2.1 modified.
  * 新增功能：
  * 1. 必须按住Ctrl键时鼠标移上去窗口才会出现，单纯鼠标移上去不显示，防止误触
  * 2. 新增右键菜单开关，可启用/禁用Ctrl键要求，状态会保存
@@ -26,7 +26,8 @@
  * 2025-08-06: v1.06: fixed window movement detection and taskbar issues
  * 2025-08-07: v1.07: fixed browser and console window border rendering issues
  * 2025-08-07: v1.1: added graphical settings interface, tray details, drag-to-hide, and edge indicators
- * 2025-10-25: v1.2: fixed multi-window interference bug for same application, improved fullscreen window detection, fixed same-app window switching logic
+ * 2025-05-25: v1.2: fixed multi-window interference bug for same application, improved fullscreen window detection, fixed same-app window switching logic
+  * 2025-05-25: v1.2.1: fixed race condition in multi-window fast switching, implemented per-window state tracking
  */
 CoordMode, Mouse, Screen		;MouseGetPos relative to Screen
 #SingleInstance ignore
@@ -527,7 +528,8 @@ watchCursor:
                 ; 隐藏指示器（窗口显示时）
                 destroyIndicator(checkWinId)
                 
-                needHide := checkWinId
+                ; 标记此窗口为需要监控隐藏的状态
+                showing_%checkWinId% := true
                     break ; 找到一个就退出循环
                 }
             }
@@ -553,26 +555,32 @@ watchCursor:
                 ; 隐藏指示器（窗口显示时）
                 destroyIndicator(winId)
                 
-                needHide := winId ; store it for next iteration
+                ; 标记此窗口为需要监控隐藏的状态
+                showing_%winId% := true
             }
         }
-    } else {
-        if (needHide) {
-            WinGetPos, %needHide%_X, %needHide%_Y, %needHide%_W, %needHide%_H, ahk_id %needHide%	; update the "needHide" win pos
+    }
+    
+    ; 检查所有正在显示的窗口，看是否需要隐藏
+    Loop, Parse, autohideWindows, `,
+    {
+        checkWinId := A_LoopField
+        if (showing_%checkWinId% && !hidden_%checkWinId%) {
+            WinGetPos, %checkWinId%_X, %checkWinId%_Y, %checkWinId%_W, %checkWinId%_H, ahk_id %checkWinId%	; update the win pos
             ; 检测窗口是否被移动，如果移动了就完全取消自动隐藏状态
             ; 使用数值比较而不是字符串比较，避免类型问题
-            showingX := showing_%needHide%_x
-            showingY := showing_%needHide%_y
-            currentX := %needHide%_X
-            currentY := %needHide%_Y
+            showingX := showing_%checkWinId%_x
+            showingY := showing_%checkWinId%_y
+            currentX := %checkWinId%_X
+            currentY := %checkWinId%_Y
             If (showingX != currentX || showingY != currentY) {
             ; if win moved after showing then cancel autohide status completely
-                curWinId := needHide
-                WinGet winPhid, PID, ahk_id %needHide%
+                curWinId := checkWinId
+                WinGet winPhid, PID, ahk_id %checkWinId%
                 curWinPId := winPhid
                 autohide_%curWinId% := false
                 autohide_%curWinPid% := false
-                needHide := false
+                showing_%checkWinId% := false
                 hideArea_%curWinId%_active := false  ; 清除区域检测设置
                 Gosub, unworkWindow
                 hidden_%curWinId% := false
@@ -580,32 +588,31 @@ watchCursor:
                 destroyIndicator(curWinId)
                 ; 更新托盘提示信息
                 Gosub, updateTrayTooltip
-                ; 窗口移动后完全取消自动隐藏，直接返回不再执行后续逻辑
-                return
-            } else if (isMouseReallyOutsideWindow(needHide, mouseX, mouseY)) {
+                ; 窗口移动后完全取消自动隐藏，继续检查其他窗口
+                continue
+            } else if (isMouseReallyOutsideWindow(checkWinId, mouseX, mouseY)) {
             ; 使用新的精确检测函数判断鼠标是否真正离开窗口
-                WinMove, ahk_id %needHide%, , hidden_%needHide%_x, hidden_%needHide%_y
+                WinMove, ahk_id %checkWinId%, , hidden_%checkWinId%_x, hidden_%checkWinId%_y
                 ; move it to 'hidden' position
                 WinActivate, ahk_id %previousActiveWindow% ; activate previously active window
-                hidden_%needHide% := true
+                hidden_%checkWinId% := true
+                showing_%checkWinId% := false ; 清除显示状态标记
                 
                 ; 重新显示指示器（窗口隐藏时）
                 if (showIndicators) {
                     ; 确定隐藏方向
-                    WinGetPos, winX, winY, winWidth, winHeight, ahk_id %needHide%
-                    if (hidden_%needHide%_x <= 1) {
+                    WinGetPos, winX, winY, winWidth, winHeight, ahk_id %checkWinId%
+                    if (hidden_%checkWinId%_x <= 1) {
                         side := "left"
-                    } else if (hidden_%needHide%_x >= A_ScreenWidth - winWidth) {
+                    } else if (hidden_%checkWinId%_x >= A_ScreenWidth - winWidth) {
                         side := "right"
-                    } else if (hidden_%needHide%_y <= 1) {
+                    } else if (hidden_%checkWinId%_y <= 1) {
                         side := "up"
                     } else {
                         side := "down"
                     }
-                    createIndicator(needHide, side)
+                    createIndicator(checkWinId, side)
                 }
-                
-                needHide := false ; do that only once
             }
         }
     }
@@ -714,7 +721,7 @@ return
 unautohide:
     autohide_%curWinId% := false
     autohide_%curWinPid% := false
-    needHide := false
+    showing_%curWinId% := false  ; 清除显示状态标记
     hideArea_%curWinId%_active := false  ; 清除区域检测设置
     Gosub, unworkWindow
     WinMove, ahk_id %curWinId%, , orig_%curWinId%_x, orig_%curWinId%_y ; go back to original position
