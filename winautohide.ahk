@@ -1,5 +1,5 @@
 /*
- * winautohide v1.2.1 modified.
+ * winautohide v1.2.3 modified.
  * 新增功能：
  * 1. 必须按住Ctrl键时鼠标移上去窗口才会出现，单纯鼠标移上去不显示，防止误触
  * 2. 新增右键菜单开关，可启用/禁用Ctrl键要求，状态会保存
@@ -28,6 +28,8 @@
  * 2025-08-07: v1.1: added graphical settings interface, tray details, drag-to-hide, and edge indicators
  * 2025-05-25: v1.2: fixed multi-window interference bug for same application, improved fullscreen window detection, fixed same-app window switching logic
   * 2025-05-25: v1.2.1: fixed race condition in multi-window fast switching, implemented per-window state tracking
+
+ * 2025-01-17: v1.2.3: 修复拖拽隐藏功能bug，添加鼠标释放等待机制，避免拖拽冲突
  */
 CoordMode, Mouse, Screen		;MouseGetPos relative to Screen
 #SingleInstance ignore
@@ -46,6 +48,11 @@ If (FileExist(configFile)) {
     enableDragHide := 1 ; 默认启用拖拽隐藏
     showIndicators := 1 ; 默认显示边缘指示器
 }
+
+; 初始化拖拽隐藏相关变量
+pendingHideWinId := ""
+pendingHidePId := ""
+pendingHideMode := ""
 
 /*
  * Hotkey bindings - 使用Ctrl+方向键
@@ -297,34 +304,54 @@ return
      ; 下边缘：窗口下边界超出屏幕下边界的三分之一高度
      bottomOutside := (winY + winHeight - oneThirdHeight > screenHeight)
      
-     ; 如果窗口有三分之一移出屏幕，触发相应的隐藏操作
-     if (leftOutside) {
-         WinActivate, ahk_id %winId%
-         curWinId := winId
-         WinGet, curWinPId, PID, ahk_id %winId%
-         mode := "left"
-         Gosub, toggleWindow
-     } else if (rightOutside) {
-         WinActivate, ahk_id %winId%
-         curWinId := winId
-         WinGet, curWinPId, PID, ahk_id %winId%
-         mode := "right"
-         Gosub, toggleWindow
-     } else if (topOutside) {
-         WinActivate, ahk_id %winId%
-         curWinId := winId
-         WinGet, curWinPId, PID, ahk_id %winId%
-         mode := "up"
-         Gosub, toggleWindow
-     } else if (bottomOutside) {
-         WinActivate, ahk_id %winId%
-         curWinId := winId
-         WinGet, curWinPId, PID, ahk_id %winId%
-         mode := "down"
-         Gosub, toggleWindow
+     ; 如果窗口有三分之一移出屏幕，记录待隐藏的窗口信息
+     if (leftOutside || rightOutside || topOutside || bottomOutside) {
+         ; 记录待隐藏的窗口信息
+         pendingHideWinId := winId
+         WinGet, pendingHidePId, PID, ahk_id %winId%
+         
+         if (leftOutside) {
+             pendingHideMode := "left"
+         } else if (rightOutside) {
+             pendingHideMode := "right"
+         } else if (topOutside) {
+             pendingHideMode := "up"
+         } else if (bottomOutside) {
+             pendingHideMode := "down"
+         }
+         
+         ; 启动等待鼠标释放的定时器
+         SetTimer, waitForMouseRelease, 50
      }
  return
 
+/*
+ * 等待鼠标释放后执行隐藏操作
+ */
+waitForMouseRelease:
+    ; 检查鼠标左键是否已释放
+    if (!GetKeyState("LButton", "P")) {
+        ; 鼠标已释放，停止定时器
+        SetTimer, waitForMouseRelease, Off
+        
+        ; 检查是否有待隐藏的窗口
+        if (pendingHideWinId != "") {
+            ; 激活窗口并执行隐藏操作
+            WinActivate, ahk_id %pendingHideWinId%
+            curWinId := pendingHideWinId
+            curWinPId := pendingHidePId
+            mode := pendingHideMode
+            
+            ; 清除待隐藏窗口信息
+            pendingHideWinId := ""
+            pendingHidePId := ""
+            pendingHideMode := ""
+            
+            ; 执行隐藏操作
+            Gosub, toggleWindow
+        }
+    }
+return
 
 /*
  * 更新托盘图标提示信息
