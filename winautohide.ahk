@@ -27,9 +27,9 @@
  * 2025-08-07: v1.07: fixed browser and console window border rendering issues
  * 2025-08-07: v1.1: added graphical settings interface, tray details, drag-to-hide, and edge indicators
  * 2025-05-25: v1.2: fixed multi-window interference bug for same application, improved fullscreen window detection, fixed same-app window switching logic
-  * 2025-05-25: v1.2.1: fixed race condition in multi-window fast switching, implemented per-window state tracking
+ * 2025-05-25: v1.2.1: fixed race condition in multi-window fast switching, implemented per-window state tracking
 
- * 2025-01-17: v1.2.3: 修复拖拽隐藏功能bug，添加鼠标释放等待机制，避免拖拽冲突
+ * 2025-01-17: v1.2.3: Fix the bug in the drag-and-hide function, add a mouse release waiting mechanism to avoid drag conflicts
  */
 CoordMode, Mouse, Screen		;MouseGetPos relative to Screen
 #SingleInstance ignore
