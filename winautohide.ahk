@@ -85,7 +85,7 @@ Hotkey, ^down, toggleWindowDown    ; Ctrl+下箭头
 
 ; 动态绑定老板键热键
 if (enableBossKey && bossKeyHotkey != "") {
-    Hotkey, %bossKeyHotkey%, toggleBossMode
+    Hotkey, % ConvertToAHKHotkey(bossKeyHotkey), toggleBossMode
 }
 
 
@@ -1523,12 +1523,12 @@ UpdateBossKeySetting:
     
     ; 重新绑定热键
     if (enableBossKey && bossKeyHotkey != "") {
-        Hotkey, %bossKeyHotkey%, toggleBossMode, On UseErrorLevel
+        Hotkey, % ConvertToAHKHotkey(bossKeyHotkey), toggleBossMode, On UseErrorLevel
         ; 静默处理错误，不显示提示
     } else {
         ; 移除热键绑定
         if (bossKeyHotkey != "") {
-            Hotkey, %bossKeyHotkey%, Off, UseErrorLevel
+            Hotkey, % ConvertToAHKHotkey(bossKeyHotkey), Off, UseErrorLevel
         }
     }
 return
@@ -1546,7 +1546,7 @@ UpdateBossKeyHotkey:
     
     ; 移除旧的热键绑定
     if (bossKeyHotkey != "") {
-        Hotkey, %bossKeyHotkey%, Off, UseErrorLevel
+        Hotkey, % ConvertToAHKHotkey(bossKeyHotkey), Off, UseErrorLevel
     }
     
     ; 更新热键变量
@@ -1557,7 +1557,7 @@ UpdateBossKeyHotkey:
     
     ; 如果启用了老板键功能，绑定新热键
     if (enableBossKey && bossKeyHotkey != "") {
-        Hotkey, %bossKeyHotkey%, toggleBossMode, On UseErrorLevel
+        Hotkey, % ConvertToAHKHotkey(bossKeyHotkey), toggleBossMode, On UseErrorLevel
         if (ErrorLevel) {
             ; 静默处理错误，恢复原值
             GuiControl, Settings:, BossKeyHotkey, %bossKeyHotkey%
@@ -1753,6 +1753,46 @@ IsValidModifier(modifier) {
     return false
 }
 
+; 将用户友好格式转换为AHK内部格式
+ConvertToAHKHotkey(hotkey) {
+    ; 空值直接返回
+    if (hotkey = "")
+        return ""
+    parts := StrSplit(hotkey, "+")
+    if (parts.Length() = 0)
+        return hotkey
+    ; 组装修饰符
+    hasCtrl := false
+    hasShift := false
+    hasAlt := false
+    hasWin := false
+    ; 遍历除最后一个主键外的修饰键
+    if (parts.Length() > 1) {
+        Loop, % parts.Length() - 1 {
+            mod := parts[A_Index]
+            if (mod = "Ctrl")
+                hasCtrl := true
+            else if (mod = "Shift")
+                hasShift := true
+            else if (mod = "Alt")
+                hasAlt := true
+            else if (mod = "LWin" || mod = "RWin" || mod = "Win")
+                hasWin := true
+        }
+    }
+    mainKey := parts[parts.Length()]
+    prefix := ""
+    if (hasCtrl)
+        prefix .= "^"
+    if (hasShift)
+        prefix .= "+"
+    if (hasAlt)
+        prefix .= "!"
+    if (hasWin)
+        prefix .= "#"
+    return prefix . mainKey
+}
+
 ; 更新自动隐藏设置
 UpdateAutoHideSetting:
     GuiControlGet, enableAutoHide, Settings:, EnableAutoHide
@@ -1941,14 +1981,14 @@ return
      ; 处理老板键热键绑定
      if (enableBossKey && bossKeyHotkey != "") {
          ; 先移除可能存在的旧绑定
-         Hotkey, %bossKeyHotkey%, Off, UseErrorLevel
+         Hotkey, % ConvertToAHKHotkey(bossKeyHotkey), Off, UseErrorLevel
          ; 绑定新热键
-         Hotkey, %bossKeyHotkey%, toggleBossMode, On UseErrorLevel
+         Hotkey, % ConvertToAHKHotkey(bossKeyHotkey), toggleBossMode, On UseErrorLevel
          ; 静默处理错误，不显示提示
      } else {
          ; 移除热键绑定
          if (bossKeyHotkey != "") {
-             Hotkey, %bossKeyHotkey%, Off, UseErrorLevel
+             Hotkey, % ConvertToAHKHotkey(bossKeyHotkey), Off, UseErrorLevel
          }
      }
      
