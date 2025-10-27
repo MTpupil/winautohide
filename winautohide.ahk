@@ -35,6 +35,10 @@ CoordMode, Mouse, Screen		;MouseGetPos relative to Screen
 #SingleInstance ignore
 Menu tray, Icon, %A_ScriptDir%\winautohide.ico
 
+; 防抖动相关变量
+lastTopShowTime := 0  ; 上次顶部窗口显示的时间
+topShowDelay := 500   ; 顶部窗口显示延迟（毫秒）
+
 ; 初始化配置 - 加载设置
 configFile := A_ScriptDir "\winautohide.ini"
 If (FileExist(configFile)) {
@@ -751,9 +755,47 @@ return
  * 检测窗口是否为全屏状态
  */
 isWindowFullscreen(winId) {
+    ; 获取窗口位置和尺寸
     WinGetPos, winX, winY, winWidth, winHeight, ahk_id %winId%
-    ; 检查窗口是否覆盖整个屏幕（允许小的误差）
-    return (winX <= 0 && winY <= 0 && winWidth >= A_ScreenWidth - 10 && winHeight >= A_ScreenHeight - 10)
+    
+    ; 获取窗口类名和标题，用于更精确的全屏检测
+    WinGetClass, winClass, ahk_id %winId%
+    WinGetTitle, winTitle, ahk_id %winId%
+    
+    ; 基本的尺寸检查：窗口是否覆盖整个屏幕（允许小的误差）
+    basicFullscreen := (winX <= 0 && winY <= 0 && winWidth >= A_ScreenWidth - 10 && winHeight >= A_ScreenHeight - 10)
+    
+    ; 对于浏览器，进行特殊检查
+    if (winClass = "Chrome_WidgetWin_1" || winClass = "Chrome_WidgetWin_0" 
+        || winClass = "MozillaWindowClass" || winClass = "ApplicationFrameWindow" 
+        || winClass = "OperaWindowClass") {
+        ; 浏览器全屏检查：窗口高度接近屏幕高度且宽度接近屏幕宽度
+        browserFullscreen := (winWidth >= A_ScreenWidth - 20 && winHeight >= A_ScreenHeight - 50)
+        return basicFullscreen || browserFullscreen
+    }
+    
+    ; 对于视频播放器和游戏，检查窗口是否最大化且接近全屏
+    if (winClass = "MediaPlayerClassicW" || winClass = "PotPlayer" 
+        || winClass = "VLC" || InStr(winTitle, "全屏") || InStr(winTitle, "Fullscreen")) {
+        return basicFullscreen || (winWidth >= A_ScreenWidth - 20 && winHeight >= A_ScreenHeight - 50)
+    }
+    
+    ; Steam 游戏窗口特殊检查
+    if (InStr(winClass, "SDL_app") || InStr(winClass, "UnrealWindow") 
+        || InStr(winClass, "CefBrowserWindow") || InStr(winClass, "vguiPopupWindow")
+        || (InStr(winTitle, "Steam") && basicFullscreen)
+        || (InStr(winTitle, "steam://") && basicFullscreen)) {
+        return true
+    }
+    
+    ; 获取窗口进程名进行Steam检测
+    WinGet, processName, ProcessName, ahk_id %winId%
+    if (InStr(processName, "steam") || processName = "steamwebhelper.exe") {
+        return basicFullscreen
+    }
+    
+    ; 默认使用基本的全屏检查
+    return basicFullscreen
 }
 
 /*
@@ -831,12 +873,28 @@ enterBossMode() {
     requireCtrl := true
     showIndicators := false
     
-    ; 隐藏所有指示器
+    ; 确保所有自动隐藏窗口都被隐藏，并销毁所有指示器
     Loop, Parse, autohideWindows, `,
     {
         curWinId := A_LoopField
-        if (curWinId != "" && indicator_%curWinId%_exists) {
-            destroyIndicator(curWinId)
+        if (curWinId != "" && autohide_%curWinId%) {
+            ; 如果窗口当前是显示状态，将其隐藏
+            if (!hidden_%curWinId%) {
+                WinMove, ahk_id %curWinId%, , hidden_%curWinId%_x, hidden_%curWinId%_y
+                hidden_%curWinId% := true
+                showing_%curWinId% := false
+            }
+            
+            ; 销毁所有可能的指示器GUI窗口
+            Gui, Indicator%curWinId%:Destroy
+            Gui, Indicator%curWinId%_1:Destroy
+            Gui, Indicator%curWinId%_2:Destroy
+            
+            ; 清除指示器状态变量
+            indicator_%curWinId%_exists := false
+            indicator_%curWinId%_side := ""
+            indicator_%curWinId%_title := ""
+            indicator_%curWinId%_style := ""
         }
     }
     
@@ -920,9 +978,9 @@ return
  * Timer implementation.
  */
 watchCursor:
-    ; 如果处于完全隐藏模式，则不响应任何鼠标操作
+    ; 如果处于完全隐藏模式，完全不响应任何鼠标操作
     if (bossMode) {
-        return
+        return ; 完全隐藏模式下，任何操作都不能显示窗口
     }
     
     MouseGetPos, mouseX, mouseY, winId ; get window under mouse pointer
@@ -931,19 +989,57 @@ watchCursor:
     ; 检查Ctrl键是否被按住
     CtrlDown := GetKeyState("Ctrl", "P")
     
-    ; 更新最后活动时间（用于自动隐藏功能）
-    if (enableAutoHide) {
-        lastActivityTime := A_TickCount
-    }
-    
     ; 首先检查是否有隐藏窗口需要通过区域检测显示（主要针对底部隐藏）
     Loop, Parse, autohideWindows, `,
     {
         checkWinId := A_LoopField
         if (hidden_%checkWinId% && hideArea_%checkWinId%_active) {
+            ; 检查当前是否有全屏应用运行，如果有则跳过显示逻辑
+            WinGet, activeWinId, ID, A
+            if (isWindowFullscreen(activeWinId)) {
+                continue ; 跳过当前循环，不显示隐藏窗口
+            }
+            
             ; 检查鼠标是否在隐藏区域内
             if (mouseX >= hideArea_%checkWinId%_left && mouseX <= hideArea_%checkWinId%_right 
                 && mouseY >= hideArea_%checkWinId%_top && mouseY <= hideArea_%checkWinId%_bottom) {
+                
+                ; 对于顶部隐藏窗口，检查是否有第三方状态栏程序（如MyDockFinder）
+                if (hideArea_%checkWinId%_top = 0 && hideArea_%checkWinId%_bottom <= 10) {
+                    ; 防抖动检查：如果距离上次显示时间太短，则跳过
+                    currentTime := A_TickCount
+                    if (currentTime - lastTopShowTime < topShowDelay) {
+                        continue ; 跳过显示，防止频繁触发
+                    }
+                    
+                    ; 获取鼠标当前位置下的窗口
+                    MouseGetPos, , , mouseWinId
+                    if (mouseWinId) {
+                        WinGetClass, mouseWinClass, ahk_id %mouseWinId%
+                        WinGetTitle, mouseWinTitle, ahk_id %mouseWinId%
+                        WinGet, mouseProcessName, ProcessName, ahk_id %mouseWinId%
+                        
+                        ; 检查是否为第三方状态栏程序
+                        if (InStr(mouseWinClass, "Dock") || InStr(mouseWinTitle, "Dock") 
+                            || InStr(mouseWinClass, "Bar") || InStr(mouseWinTitle, "MyDockFinder")
+                            || InStr(mouseProcessName, "MyDockFinder") || InStr(mouseProcessName, "dock")
+                            || mouseWinClass = "Shell_TrayWnd" || mouseWinClass = "DV2ControlHost"
+                            || InStr(mouseWinClass, "StatusBar") || InStr(mouseWinClass, "ToolBar")) {
+                            continue ; 跳过显示，避免与第三方状态栏冲突
+                        }
+                        
+                        ; 额外检查：如果鼠标下的窗口位置在屏幕顶部5像素内，且宽度接近屏幕宽度
+                        ; 很可能是状态栏程序，也跳过显示
+                        WinGetPos, mouseWinX, mouseWinY, mouseWinW, mouseWinH, ahk_id %mouseWinId%
+                        if (mouseWinY <= 5 && mouseWinW >= A_ScreenWidth * 0.8) {
+                            continue ; 跳过显示，避免与状态栏程序冲突
+                        }
+                    }
+                    
+                    ; 更新上次显示时间
+                    lastTopShowTime := currentTime
+                }
+                
                 ; 检查Ctrl键要求
                 if ((requireCtrl && CtrlDown) || !requireCtrl) {
                     ; 显示隐藏的窗口
@@ -968,6 +1064,12 @@ watchCursor:
     ; 修改后的窗口检测逻辑：只检测鼠标直接在自动隐藏窗口上的情况
     ; 不再使用进程ID进行匹配，避免同一应用程序的其他窗口干扰
     if (autohide_%winId%) {
+        ; 检查当前是否有全屏应用运行，如果有则跳过显示逻辑
+        WinGet, activeWinId, ID, A
+        if (isWindowFullscreen(activeWinId)) {
+            return ; 直接返回，不显示隐藏窗口
+        }
+        
         ; 如果启用了Ctrl要求，则需要Ctrl+鼠标在窗口上才显示
         ; 如果未启用Ctrl要求，则只需要鼠标在窗口上就显示
         if ((requireCtrl && CtrlDown) || !requireCtrl) {
