@@ -43,8 +43,12 @@ If (FileExist(configFile)) {
     IniRead, enableDragHide, %configFile%, Settings, EnableDragHide, 1 ; 默认启用拖拽隐藏
     IniRead, showIndicators, %configFile%, Settings, ShowIndicators, 1 ; 默认显示边缘指示器
     IniRead, indicatorColor, %configFile%, Settings, IndicatorColor, FF6B35 ; 默认橙红色
-IniRead, indicatorStyle, %configFile%, Settings, IndicatorStyle, default ; 默认样式：default, minimal, full
-IniRead, indicatorWidth, %configFile%, Settings, IndicatorWidth, 4 ; 默认指示器宽度：4像素
+    IniRead, indicatorStyle, %configFile%, Settings, IndicatorStyle, default ; 默认样式：default, minimal, full
+    IniRead, indicatorWidth, %configFile%, Settings, IndicatorWidth, 4 ; 默认指示器宽度：4像素
+    IniRead, enableBossKey, %configFile%, Settings, EnableBossKey, 1 ; 默认启用老板键功能
+    IniRead, bossKeyHotkey, %configFile%, Settings, BossKeyHotkey, F9 ; 默认老板键为F9
+    IniRead, enableAutoHide, %configFile%, Settings, EnableAutoHide, 0 ; 默认禁用自动隐藏
+    IniRead, autoHideDelay, %configFile%, Settings, AutoHideDelay, 300 ; 默认5分钟无操作后自动隐藏
 } else {
     requireCtrl := 1 ; 默认启用Ctrl要求
     showTrayDetails := 0 ; 默认显示详细信息
@@ -52,12 +56,24 @@ IniRead, indicatorWidth, %configFile%, Settings, IndicatorWidth, 4 ; 默认指�
     showIndicators := 1 ; 默认显示边缘指示器
     indicatorColor := "FF6B35" ; 默认橙红色
     indicatorStyle := "default" ; 默认样式：default, minimal, full
+    indicatorWidth := 4 ; 默认指示器宽度：4像素
+    enableBossKey := 1 ; 默认启用老板键功能
+    bossKeyHotkey := "F9" ; 默认老板键为F9
+    enableAutoHide := 0 ; 默认禁用自动隐藏
+    autoHideDelay := 300 ; 默认5分钟无操作后自动隐藏
 }
 
 ; 初始化拖拽隐藏相关变量
 pendingHideWinId := ""
 pendingHidePId := ""
 pendingHideMode := ""
+
+; 初始化老板键和自动隐藏相关变量
+bossMode := false ; 完全隐藏模式状态
+lastActivityTime := A_TickCount ; 最后活动时间
+originalRequireCtrl := requireCtrl ; 保存原始Ctrl要求设置
+originalShowIndicators := showIndicators ; 保存原始指示器显示设置
+isRecordingHotkey := false ; 热键录入状态
 
 /*
  * Hotkey bindings - 使用Ctrl+方向键
@@ -66,6 +82,11 @@ Hotkey, ^right, toggleWindowRight  ; Ctrl+右箭头
 Hotkey, ^left, toggleWindowLeft    ; Ctrl+左箭头
 Hotkey, ^up, toggleWindowUp        ; Ctrl+上箭头
 Hotkey, ^down, toggleWindowDown    ; Ctrl+下箭头
+
+; 动态绑定老板键热键
+if (enableBossKey && bossKeyHotkey != "") {
+    Hotkey, %bossKeyHotkey%, toggleBossMode
+}
 
 
 /*
@@ -76,6 +97,11 @@ SetTimer, watchCursor, 300
 ; 根据设置启动拖拽检测定时器
 if (enableDragHide) {
     SetTimer, checkDragHide, 100
+}
+
+; 启动活动监控定时器（用于自动隐藏功能）
+if (enableAutoHide) {
+    SetTimer, checkUserActivityTimer, 5000 ; 每5秒检查一次用户活动
 }
 
 /*
@@ -773,14 +799,142 @@ isMouseReallyOutsideWindow(targetWinId, mouseX, mouseY) {
 }
 
 /*
+ * 老板键和自动隐藏功能实现
+ */
+
+; 切换完全隐藏模式（老板键功能）
+toggleBossMode:
+    if (!enableBossKey) {
+        return
+    }
+    
+    if (!bossMode) {
+        ; 进入完全隐藏模式
+        enterBossMode()
+    } else {
+        ; 退出完全隐藏模式
+        exitBossMode()
+    }
+return
+
+; 进入完全隐藏模式
+enterBossMode() {
+    global
+    
+    bossMode := true
+    
+    ; 保存当前设置
+    originalRequireCtrl := requireCtrl
+    originalShowIndicators := showIndicators
+    
+    ; 强制设置为需要Ctrl键且隐藏指示器
+    requireCtrl := true
+    showIndicators := false
+    
+    ; 隐藏所有指示器
+    Loop, Parse, autohideWindows, `,
+    {
+        curWinId := A_LoopField
+        if (curWinId != "" && indicator_%curWinId%_exists) {
+            destroyIndicator(curWinId)
+        }
+    }
+    
+    ; 更新托盘提示
+    Menu, tray, Tip, WinAutoHide v1.2.4 - 完全隐藏模式
+}
+
+; 退出完全隐藏模式
+exitBossMode() {
+    global
+    
+    bossMode := false
+    
+    ; 恢复原始设置
+    requireCtrl := originalRequireCtrl
+    showIndicators := originalShowIndicators
+    
+    ; 重新创建指示器（如果启用）
+    if (showIndicators) {
+        Gosub, updateIndicators
+    }
+    
+    ; 更新托盘提示
+    Gosub, updateTrayTooltip
+}
+
+
+
+; 检查用户活动（用于自动隐藏功能）
+checkUserActivity() {
+    ; 声明所有静态变量
+    static lastMouseX := 0, lastMouseY := 0, lastCtrlState := false, lastShiftState := false, lastAltState := false
+    
+    if (!enableAutoHide || bossMode) {
+        return
+    }
+    
+    ; 获取当前时间
+    currentTime := A_TickCount
+    
+    ; 检查鼠标和键盘活动
+    MouseGetPos, currentMouseX, currentMouseY
+    
+    ; 检查鼠标是否移动
+    if (currentMouseX != lastMouseX || currentMouseY != lastMouseY) {
+        lastActivityTime := currentTime
+        lastMouseX := currentMouseX
+        lastMouseY := currentMouseY
+        return
+    }
+    
+    ; 检查是否有按键活动（通过检查修饰键状态变化）
+    currentCtrlState := GetKeyState("Ctrl", "P")
+    currentShiftState := GetKeyState("Shift", "P")
+    currentAltState := GetKeyState("Alt", "P")
+    
+    if (currentCtrlState != lastCtrlState || currentShiftState != lastShiftState || currentAltState != lastAltState) {
+        lastActivityTime := currentTime
+        lastCtrlState := currentCtrlState
+        lastShiftState := currentShiftState
+        lastAltState := currentAltState
+        return
+    }
+    
+    ; 检查是否超过设定的无活动时间
+    inactiveTime := (currentTime - lastActivityTime) / 1000 ; 转换为秒
+    if (inactiveTime >= autoHideDelay) {
+        ; 自动进入完全隐藏模式
+        enterBossMode()
+        ; 重置活动时间，避免重复触发
+        lastActivityTime := currentTime
+    }
+}
+
+; 定时器标签，用于调用checkUserActivity函数
+checkUserActivityTimer:
+    checkUserActivity()
+return
+
+/*
  * Timer implementation.
  */
 watchCursor:
+    ; 如果处于完全隐藏模式，则不响应任何鼠标操作
+    if (bossMode) {
+        return
+    }
+    
     MouseGetPos, mouseX, mouseY, winId ; get window under mouse pointer
     WinGet winPid, PID, ahk_id %winId% ; get the PID for process recognition
 
     ; 检查Ctrl键是否被按住
     CtrlDown := GetKeyState("Ctrl", "P")
+    
+    ; 更新最后活动时间（用于自动隐藏功能）
+    if (enableAutoHide) {
+        lastActivityTime := A_TickCount
+    }
     
     ; 首先检查是否有隐藏窗口需要通过区域检测显示（主要针对底部隐藏）
     Loop, Parse, autohideWindows, `,
@@ -1193,20 +1347,44 @@ Gui, Settings:Add, Checkbox, x40 y140 w250 h20 vShowIndicators gUpdateIndicators
     ; 添加分隔线
     Gui, Settings:Add, Text, x20 y260 w300 h1 0x10 ; SS_ETCHEDHORZ
     
+    ; 老板键和自动隐藏设置
+    Gui, Settings:Add, Text, x20 y280 w300 h20, 高级功能：
+    Gui, Settings:Add, Checkbox, x40 y310 w250 h20 vEnableBossKey gUpdateBossKeySetting, 启用老板键功能
+    
+    Gui, Settings:Add, Text, x60 y340 w80 h20, 老板键快捷键：
+    Gui, Settings:Add, Edit, x140 y338 w100 h20 vBossKeyHotkey gUpdateBossKeyHotkey ReadOnly
+    Gui, Settings:Add, Button, x250 y337 w60 h22 vRecordHotkey gStartHotkeyRecord, 录入
+    Gui, Settings:Add, Text, x320 y340 w80 h20 vHotkeyStatus, 点击录入
+    
+    Gui, Settings:Add, Checkbox, x40 y370 w250 h20 vEnableAutoHide gUpdateAutoHideSetting, 启用自动隐藏功能
+    
+    Gui, Settings:Add, Text, x60 y400 w80 h20, 无操作时间：
+    Gui, Settings:Add, Edit, x140 y398 w60 h20 vAutoHideDelay gUpdateAutoHideDelay Number
+    Gui, Settings:Add, Text, x210 y400 w30 h20, 秒
+    
+    ; 添加分隔线
+    Gui, Settings:Add, Text, x20 y430 w300 h1 0x10 ; SS_ETCHEDHORZ
+    
     ; 使用说明区域
-    Gui, Settings:Add, Text, x20 y280 w300 h20, 使用说明：
-    Gui, Settings:Add, Text, x40 y310 w280 h90, 使用快捷键 Ctrl+方向键 将当前窗口隐藏到屏幕边缘。`n将鼠标移动到边缘即可显示隐藏窗口。`n移动已显示的隐藏窗口将取消自动隐藏。`n启用拖拽隐藏后，按住Ctrl拖拽到边缘也可隐藏。`n边缘指示器会在有隐藏窗口的位置显示指示条。
+    Gui, Settings:Add, Text, x20 y450 w300 h20, 使用说明：
+    Gui, Settings:Add, Text, x40 y480 w280 h120, 使用快捷键 Ctrl+方向键 将当前窗口隐藏到屏幕边缘。`n将鼠标移动到边缘即可显示隐藏窗口。`n移动已显示的隐藏窗口将取消自动隐藏。`n启用拖拽隐藏后，按住Ctrl拖拽到边缘也可隐藏。`n边缘指示器会在有隐藏窗口的位置显示指示条。`n`n老板键：按设定快捷键进入完全隐藏模式，任何操作都不会显示窗口。`n自动隐藏：电脑无操作指定时间后自动进入完全隐藏模式。
     
     ; 按钮区域
-    Gui, Settings:Add, Button, x40 y420 w80 h30 gShowAbout, 关于
-Gui, Settings:Add, Button, x140 y420 w80 h30 gSaveSettings, 保存
-Gui, Settings:Add, Button, x240 y420 w80 h30 gCloseSettings, 关闭
+    Gui, Settings:Add, Button, x40 y620 w80 h30 gShowAbout, 关于
+Gui, Settings:Add, Button, x140 y620 w80 h30 gSaveSettings, 保存
+Gui, Settings:Add, Button, x240 y620 w80 h30 gCloseSettings, 关闭
     
     ; 设置复选框状态
     GuiControl, Settings:, CtrlRequired, %requireCtrl%
     GuiControl, Settings:, ShowTrayDetails, %showTrayDetails%
     GuiControl, Settings:, EnableDragHide, %enableDragHide%
     GuiControl, Settings:, ShowIndicators, %showIndicators%
+    GuiControl, Settings:, EnableBossKey, %enableBossKey%
+    GuiControl, Settings:, EnableAutoHide, %enableAutoHide%
+    
+    ; 设置文本框的值
+    GuiControl, Settings:, BossKeyHotkey, %bossKeyHotkey%
+    GuiControl, Settings:, AutoHideDelay, %autoHideDelay%
     
     ; 设置指示器宽度滑块的值
     GuiControl, Settings:, IndicatorWidth, %indicatorWidth%
@@ -1238,7 +1416,7 @@ Gui, Settings:Add, Button, x240 y420 w80 h30 gCloseSettings, 关闭
     }
     
     ; 显示设置窗口
-    Gui, Settings:Show, w360 h440, WinAutoHide 设置
+    Gui, Settings:Show, w360 h670, WinAutoHide 设置
 return
 
 ; 实时更新Ctrl设置
@@ -1331,6 +1509,286 @@ UpdateIndicatorStyle:
     Gosub, updateIndicators
 return
 
+; 更新老板键设置
+UpdateBossKeySetting:
+    GuiControlGet, enableBossKey, Settings:, EnableBossKey
+    
+    ; 保存设置到配置文件
+    IniWrite, %enableBossKey%, %configFile%, Settings, EnableBossKey
+    
+    ; 如果禁用老板键，确保退出完全隐藏模式
+    if (!enableBossKey && bossMode) {
+        exitBossMode()
+    }
+    
+    ; 重新绑定热键
+    if (enableBossKey && bossKeyHotkey != "") {
+        Hotkey, %bossKeyHotkey%, toggleBossMode, On UseErrorLevel
+        ; 静默处理错误，不显示提示
+    } else {
+        ; 移除热键绑定
+        if (bossKeyHotkey != "") {
+            Hotkey, %bossKeyHotkey%, Off, UseErrorLevel
+        }
+    }
+return
+
+; 更新老板键快捷键
+UpdateBossKeyHotkey:
+    GuiControlGet, newHotkey, Settings:, BossKeyHotkey
+    
+    ; 验证热键格式（支持自动录入格式）
+    if (newHotkey != "" && !IsValidHotkey(newHotkey)) {
+        ; 静默恢复原值，不显示错误提示
+        GuiControl, Settings:, BossKeyHotkey, %bossKeyHotkey%
+        return
+    }
+    
+    ; 移除旧的热键绑定
+    if (bossKeyHotkey != "") {
+        Hotkey, %bossKeyHotkey%, Off, UseErrorLevel
+    }
+    
+    ; 更新热键变量
+    bossKeyHotkey := newHotkey
+    
+    ; 保存设置到配置文件
+    IniWrite, %bossKeyHotkey%, %configFile%, Settings, BossKeyHotkey
+    
+    ; 如果启用了老板键功能，绑定新热键
+    if (enableBossKey && bossKeyHotkey != "") {
+        Hotkey, %bossKeyHotkey%, toggleBossMode, On UseErrorLevel
+        if (ErrorLevel) {
+            ; 静默处理错误，恢复原值
+            GuiControl, Settings:, BossKeyHotkey, %bossKeyHotkey%
+        }
+    }
+return
+
+; 开始热键录入
+StartHotkeyRecord:
+    ; 设置录入状态
+    isRecordingHotkey := true
+    
+    ; 更新界面状态
+    GuiControl, Settings:, HotkeyStatus, 请按下组合键...
+    GuiControl, Settings:Disable, RecordHotkey
+    
+    ; 启动热键监听
+    SetTimer, CheckHotkeyInput, 50
+return
+
+; 检查热键输入
+CheckHotkeyInput:
+    if (!isRecordingHotkey) {
+        SetTimer, CheckHotkeyInput, Off
+        return
+    }
+    
+    ; 检查修饰键状态
+    ctrlPressed := GetKeyState("Ctrl", "P")
+    shiftPressed := GetKeyState("Shift", "P")
+    altPressed := GetKeyState("Alt", "P")
+    winPressed := GetKeyState("LWin", "P") || GetKeyState("RWin", "P")
+    
+    ; 检查功能键和字母数字键
+    detectedKey := ""
+    
+    ; 功能键检查
+    Loop, 12 {
+        if (GetKeyState("F" . A_Index, "P")) {
+            detectedKey := "F" . A_Index
+            break
+        }
+    }
+    
+    ; 如果没有功能键，检查字母数字键
+    if (detectedKey = "") {
+        ; 字母键
+        Loop, 26 {
+            key := Chr(64 + A_Index) ; A-Z
+            if (GetKeyState(key, "P")) {
+                detectedKey := key
+                break
+            }
+        }
+        
+        ; 数字键
+        if (detectedKey = "") {
+            Loop, 10 {
+                key := A_Index - 1 ; 0-9
+                if (GetKeyState(key, "P")) {
+                    detectedKey := key
+                    break
+                }
+            }
+        }
+        
+        ; 特殊键
+        if (detectedKey = "") {
+            specialKeys := "Space,Tab,Enter,Escape,Backspace,Delete,Insert,Home,End,PageUp,PageDown,Up,Down,Left,Right"
+            Loop, Parse, specialKeys, `,
+            {
+                if (GetKeyState(A_LoopField, "P")) {
+                    detectedKey := A_LoopField
+                    break
+                }
+            }
+        }
+    }
+    
+    ; 如果检测到按键，构建热键字符串
+    if (detectedKey != "") {
+        newHotkey := ""
+        
+        ; 添加修饰键
+        if (ctrlPressed)
+            newHotkey .= "Ctrl+"
+        if (shiftPressed)
+            newHotkey .= "Shift+"
+        if (altPressed)
+            newHotkey .= "Alt+"
+        if (winPressed)
+            newHotkey .= "LWin+"
+        
+        ; 添加主键
+        newHotkey .= detectedKey
+        
+        ; 结束录入
+        FinishHotkeyRecord(newHotkey)
+    }
+return
+
+; 完成热键录入
+FinishHotkeyRecord(hotkey) {
+    global
+    
+    ; 停止录入状态
+    isRecordingHotkey := false
+    SetTimer, CheckHotkeyInput, Off
+    
+    ; 更新界面
+    GuiControl, Settings:, BossKeyHotkey, %hotkey%
+    GuiControl, Settings:, HotkeyStatus, 录入完成
+    GuiControl, Settings:Enable, RecordHotkey
+    
+    ; 触发热键更新
+    Gosub, UpdateBossKeyHotkey
+    
+    ; 2秒后恢复状态提示
+    SetTimer, ResetHotkeyStatus, 2000
+}
+
+; 重置热键状态提示
+ResetHotkeyStatus:
+    SetTimer, ResetHotkeyStatus, Off
+    GuiControl, Settings:, HotkeyStatus, 点击录入
+return
+
+; 验证热键格式是否有效
+IsValidHotkey(hotkey) {
+    ; 空值视为有效（可以清空热键）
+    if (hotkey = "")
+        return true
+    
+    ; 检查基本格式：修饰键+主键
+    ; 支持的修饰键：Ctrl, Shift, Alt, LWin, RWin
+    ; 支持的主键：F1-F12, A-Z, 0-9, 特殊键
+    
+    ; 分离修饰键和主键
+    parts := StrSplit(hotkey, "+")
+    if (parts.Length() = 0)
+        return false
+    
+    mainKey := parts[parts.Length()]
+    
+    ; 验证主键
+    if (!IsValidMainKey(mainKey))
+        return false
+    
+    ; 验证修饰键（如果有）
+    if (parts.Length() > 1) {
+        Loop, % parts.Length() - 1 {
+            if (!IsValidModifier(parts[A_Index]))
+                return false
+        }
+    }
+    
+    return true
+}
+
+; 验证主键是否有效
+IsValidMainKey(key) {
+    ; 功能键 F1-F12
+    if (RegExMatch(key, "^F([1-9]|1[0-2])$"))
+        return true
+    
+    ; 字母键 A-Z
+    if (RegExMatch(key, "^[A-Z]$"))
+        return true
+    
+    ; 数字键 0-9
+    if (RegExMatch(key, "^[0-9]$"))
+        return true
+    
+    ; 特殊键
+    specialKeys := "Space,Tab,Enter,Escape,Backspace,Delete,Insert,Home,End,PageUp,PageDown,Up,Down,Left,Right"
+    Loop, Parse, specialKeys, `,
+    {
+        if (key = A_LoopField)
+            return true
+    }
+    
+    return false
+}
+
+; 验证修饰键是否有效
+IsValidModifier(modifier) {
+    validModifiers := "Ctrl,Shift,Alt,LWin,RWin"
+    Loop, Parse, validModifiers, `,
+    {
+        if (modifier = A_LoopField)
+            return true
+    }
+    return false
+}
+
+; 更新自动隐藏设置
+UpdateAutoHideSetting:
+    GuiControlGet, enableAutoHide, Settings:, EnableAutoHide
+    
+    ; 保存设置到配置文件
+    IniWrite, %enableAutoHide%, %configFile%, Settings, EnableAutoHide
+    
+    ; 重置最后活动时间
+    if (enableAutoHide) {
+        lastActivityTime := A_TickCount
+    }
+return
+
+; 更新自动隐藏延迟时间
+UpdateAutoHideDelay:
+    GuiControlGet, newDelay, Settings:, AutoHideDelay
+    
+    ; 验证输入值
+    if (newDelay < 10) {
+        ; 静默恢复原值，不显示错误提示
+        GuiControl, Settings:, AutoHideDelay, %autoHideDelay%
+        return
+    }
+    
+    ; 更新延迟时间变量
+    autoHideDelay := newDelay
+    
+    ; 保存设置到配置文件
+    IniWrite, %autoHideDelay%, %configFile%, Settings, AutoHideDelay
+    
+    ; 重置最后活动时间
+    if (enableAutoHide) {
+        lastActivityTime := A_TickCount
+    }
+return
+
 ; 更新指示器颜色设置
 UpdateIndicatorColor:
     ; 获取指示器颜色下拉列表的值
@@ -1415,6 +1873,12 @@ return
        showTrayDetails := ShowTrayDetails
        enableDragHide := EnableDragHide
        showIndicators := ShowIndicators
+       enableBossKey := EnableBossKey
+       enableAutoHide := EnableAutoHide
+       
+       ; 获取文本框的值
+       GuiControlGet, bossKeyHotkey, Settings:, BossKeyHotkey
+       GuiControlGet, autoHideDelay, Settings:, AutoHideDelay
        
        ; 获取下拉列表的值并转换为配置值
        ; 处理指示器样式
@@ -1452,6 +1916,10 @@ return
        IniWrite, %indicatorColor%, %configFile%, Settings, IndicatorColor
        IniWrite, %indicatorStyle%, %configFile%, Settings, IndicatorStyle
        IniWrite, %indicatorWidth%, %configFile%, Settings, IndicatorWidth
+       IniWrite, %enableBossKey%, %configFile%, Settings, EnableBossKey
+       IniWrite, %bossKeyHotkey%, %configFile%, Settings, BossKeyHotkey
+       IniWrite, %enableAutoHide%, %configFile%, Settings, EnableAutoHide
+       IniWrite, %autoHideDelay%, %configFile%, Settings, AutoHideDelay
       
       ; 更新托盘菜单状态
       If (requireCtrl = 1) {
@@ -1469,6 +1937,25 @@ return
      
      ; 更新指示器显示
      Gosub, updateIndicators
+     
+     ; 处理老板键热键绑定
+     if (enableBossKey && bossKeyHotkey != "") {
+         ; 先移除可能存在的旧绑定
+         Hotkey, %bossKeyHotkey%, Off, UseErrorLevel
+         ; 绑定新热键
+         Hotkey, %bossKeyHotkey%, toggleBossMode, On UseErrorLevel
+         ; 静默处理错误，不显示提示
+     } else {
+         ; 移除热键绑定
+         if (bossKeyHotkey != "") {
+             Hotkey, %bossKeyHotkey%, Off, UseErrorLevel
+         }
+     }
+     
+     ; 重置自动隐藏相关变量
+     if (enableAutoHide) {
+         lastActivityTime := A_TickCount
+     }
     
     ; 显示保存成功提醒（自动消失的Toast通知）
      ; 创建一个小的提示窗口
