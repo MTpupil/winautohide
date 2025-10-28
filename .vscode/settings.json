@@ -1,6 +1,6 @@
 {
     "projectColors.mainColor": "#40e240",
-    "window.title": "d:\\software\\mt\\git\\winautohide",
+    "window.title": "winautohide",
     "workbench.colorCustomizations": {
         "statusBarItem.warningBackground": "#40e240",
         "statusBarItem.warningForeground": "#000000",
@@ -40,5 +40,12 @@
         "activityBar.activeBorder": "#40e240",
         "activityBarBadge.foreground": "#000000",
         "activityBarBadge.background": "#40e240"
-    }
+    },
+    "projectColors.name": "winautohide",
+    "projectColors.isActivityBarColored": false,
+    "projectColors.isTitleBarColored": false,
+    "projectColors.isStatusBarColored": true,
+    "projectColors.isProjectNameColored": true,
+    "projectColors.isActiveItemsColored": true,
+    "projectColors.setWindowTitle": true
 }

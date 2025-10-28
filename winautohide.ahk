@@ -12,6 +12,13 @@
  * 9. 新增拖拽窗口隐藏功能，按住Ctrl键并拖拽窗口到屏幕外超过三分之一可隐藏窗口
  * 10. 新增边缘指示器功能，为隐藏的窗口在屏幕边缘显示小指示器，可在设置中开关
  * 11. 修复同应用程序多窗口场景下的隐藏逻辑bug，解决全屏窗口干扰隐藏判断的问题
+ * 12. 新增完全隐藏功能（老板键），完全隐藏后不会以任何方式触发窗口显示
+ * 13. 优化可自定义自动隐藏功能
+ * 14. 优化指示器功能，新增多个样式以及可自定义颜色
+ * 15. 优化设置页面，使用更方便的修改控件
+ * 16. 优化完全隐藏功能，隐藏时会把托盘图标一起隐藏
+ * 17. 优化退出功能，退出时候会把所有窗口最小化而不是全部显示
+ * 18. 优化设置页面布局，避免设置项太多导致页面过长
  *
  * This program and its source are in the public domain.
  * Contact BoD@JRAF.org for more information.
@@ -45,6 +52,7 @@ If (FileExist(configFile)) {
     IniRead, requireCtrl, %configFile%, Settings, RequireCtrl, 1 ; 默认启用
     IniRead, showTrayDetails, %configFile%, Settings, ShowTrayDetails, 0 ; 默认显示详细信息
     IniRead, enableDragHide, %configFile%, Settings, EnableDragHide, 1 ; 默认启用拖拽隐藏
+    IniRead, dragHideRatio, %configFile%, Settings, DragHideRatio, 33 ; 默认拖拽隐藏占比33%（三分之一）
     IniRead, showIndicators, %configFile%, Settings, ShowIndicators, 1 ; 默认显示边缘指示器
     IniRead, indicatorColor, %configFile%, Settings, IndicatorColor, FF6B35 ; 默认橙红色
     IniRead, indicatorStyle, %configFile%, Settings, IndicatorStyle, default ; 默认样式：default, minimal, full
@@ -52,11 +60,12 @@ If (FileExist(configFile)) {
     IniRead, enableBossKey, %configFile%, Settings, EnableBossKey, 1 ; 默认启用老板键功能
     IniRead, bossKeyHotkey, %configFile%, Settings, BossKeyHotkey, F9 ; 默认老板键为F9
     IniRead, enableAutoHide, %configFile%, Settings, EnableAutoHide, 0 ; 默认禁用自动隐藏
-    IniRead, autoHideDelay, %configFile%, Settings, AutoHideDelay, 300 ; 默认5分钟无操作后自动隐藏
+    IniRead, autoHideDelay, %configFile%, Settings, AutoHideDelay, 5 ; 默认5分钟无操作后自动隐藏
 } else {
     requireCtrl := 1 ; 默认启用Ctrl要求
     showTrayDetails := 0 ; 默认显示详细信息
     enableDragHide := 1 ; 默认启用拖拽隐藏
+    dragHideRatio := 33 ; 默认拖拽隐藏占比33%（三分之一）
     showIndicators := 1 ; 默认显示边缘指示器
     indicatorColor := "FF6B35" ; 默认橙红色
     indicatorStyle := "default" ; 默认样式：default, minimal, full
@@ -64,7 +73,7 @@ If (FileExist(configFile)) {
     enableBossKey := 1 ; 默认启用老板键功能
     bossKeyHotkey := "F9" ; 默认老板键为F9
     enableAutoHide := 0 ; 默认禁用自动隐藏
-    autoHideDelay := 300 ; 默认5分钟无操作后自动隐藏
+    autoHideDelay := 5 ; 默认5分钟无操作后自动隐藏
 }
 
 ; 初始化拖拽隐藏相关变量
@@ -78,6 +87,10 @@ lastActivityTime := A_TickCount ; 最后活动时间
 originalRequireCtrl := requireCtrl ; 保存原始Ctrl要求设置
 originalShowIndicators := showIndicators ; 保存原始指示器显示设置
 isRecordingHotkey := false ; 热键录入状态
+
+; 初始化帮助浮窗相关变量
+helpTooltipLastX := 0 ; 帮助浮窗显示时的鼠标X坐标
+helpTooltipLastY := 0 ; 帮助浮窗显示时的鼠标Y坐标
 
 /*
  * Hotkey bindings - 使用Ctrl+方向键
@@ -457,24 +470,24 @@ return
      SysGet, screenWidth, 78
      SysGet, screenHeight, 79
      
-     ; 计算窗口三分之一的尺寸
-     oneThirdWidth := winWidth // 3
-     oneThirdHeight := winHeight // 3
+     ; 计算窗口指定占比的尺寸（使用配置的拖拽隐藏占比）
+     ratioWidth := winWidth * dragHideRatio // 100
+     ratioHeight := winHeight * dragHideRatio // 100
      
-     ; 检查窗口是否有三分之一移出屏幕
-     ; 左边缘：窗口左边界超出屏幕左边界的三分之一宽度
-     leftOutside := (winX + oneThirdWidth < 0)
+     ; 检查窗口是否有指定占比移出屏幕
+     ; 左边缘：窗口左边界超出屏幕左边界的指定占比宽度
+     leftOutside := (winX + ratioWidth < 0)
      
-     ; 右边缘：窗口右边界超出屏幕右边界的三分之一宽度
-     rightOutside := (winX + winWidth - oneThirdWidth > screenWidth)
+     ; 右边缘：窗口右边界超出屏幕右边界的指定占比宽度
+     rightOutside := (winX + winWidth - ratioWidth > screenWidth)
      
-     ; 上边缘：窗口上边界超出屏幕上边界的三分之一高度
-     topOutside := (winY + oneThirdHeight < 0)
+     ; 上边缘：窗口上边界超出屏幕上边界的指定占比高度
+     topOutside := (winY + ratioHeight < 0)
      
-     ; 下边缘：窗口下边界超出屏幕下边界的三分之一高度
-     bottomOutside := (winY + winHeight - oneThirdHeight > screenHeight)
+     ; 下边缘：窗口下边界超出屏幕下边界的指定占比高度
+     bottomOutside := (winY + winHeight - ratioHeight > screenHeight)
      
-     ; 如果窗口有三分之一移出屏幕，记录待隐藏的窗口信息
+     ; 如果窗口有指定占比移出屏幕，记录待隐藏的窗口信息
      if (leftOutside || rightOutside || topOutside || bottomOutside) {
          ; 记录待隐藏的窗口信息
          pendingHideWinId := winId
@@ -762,22 +775,39 @@ isWindowFullscreen(winId) {
     WinGetClass, winClass, ahk_id %winId%
     WinGetTitle, winTitle, ahk_id %winId%
     
-    ; 基本的尺寸检查：窗口是否覆盖整个屏幕（允许小的误差）
-    basicFullscreen := (winX <= 0 && winY <= 0 && winWidth >= A_ScreenWidth - 10 && winHeight >= A_ScreenHeight - 10)
+    ; 基本的尺寸检查：窗口是否覆盖整个屏幕（更严格的检查，避免误判）
+    ; 要求窗口位置接近(0,0)且尺寸接近屏幕尺寸
+    basicFullscreen := (winX <= 2 && winY <= 2 && winWidth >= A_ScreenWidth - 5 && winHeight >= A_ScreenHeight - 5)
+    
+    ; 获取窗口样式，进一步验证是否为真正的全屏窗口
+    WinGet, winStyle, Style, ahk_id %winId%
+    WinGet, winExStyle, ExStyle, ahk_id %winId%
+    
+    ; 检查窗口是否有标题栏和边框（真正的全屏窗口通常没有这些）
+    hasCaption := (winStyle & 0xC00000)  ; WS_CAPTION
+    hasBorder := (winStyle & 0x800000)   ; WS_BORDER
+    
+    ; 如果窗口有标题栏或边框，且不是特殊的全屏应用，则不认为是全屏
+    if (basicFullscreen && (hasCaption || hasBorder)) {
+        ; 对于有标题栏/边框的窗口，需要更严格的检查
+        basicFullscreen := false
+    }
     
     ; 对于浏览器，进行特殊检查
     if (winClass = "Chrome_WidgetWin_1" || winClass = "Chrome_WidgetWin_0" 
         || winClass = "MozillaWindowClass" || winClass = "ApplicationFrameWindow" 
         || winClass = "OperaWindowClass") {
-        ; 浏览器全屏检查：窗口高度接近屏幕高度且宽度接近屏幕宽度
-        browserFullscreen := (winWidth >= A_ScreenWidth - 20 && winHeight >= A_ScreenHeight - 50)
+        ; 浏览器全屏检查：必须同时满足尺寸和位置要求，且没有标题栏
+        browserFullscreen := (winX <= 2 && winY <= 2 && winWidth >= A_ScreenWidth - 10 && winHeight >= A_ScreenHeight - 10 && !hasCaption)
         return basicFullscreen || browserFullscreen
     }
     
     ; 对于视频播放器和游戏，检查窗口是否最大化且接近全屏
     if (winClass = "MediaPlayerClassicW" || winClass = "PotPlayer" 
         || winClass = "VLC" || InStr(winTitle, "全屏") || InStr(winTitle, "Fullscreen")) {
-        return basicFullscreen || (winWidth >= A_ScreenWidth - 20 && winHeight >= A_ScreenHeight - 50)
+        ; 视频播放器全屏检查：必须同时满足尺寸、位置要求，且没有标题栏
+        videoFullscreen := (winX <= 2 && winY <= 2 && winWidth >= A_ScreenWidth - 10 && winHeight >= A_ScreenHeight - 10 && !hasCaption)
+        return basicFullscreen || videoFullscreen
     }
     
     ; Steam 游戏窗口特殊检查
@@ -898,7 +928,10 @@ enterBossMode() {
         }
     }
     
-    ; 更新托盘提示
+    ; 隐藏托盘图标
+    Menu, tray, NoIcon
+    
+    ; 更新托盘提示（虽然图标已隐藏，但保留提示以备恢复时使用）
     Menu, tray, Tip, WinAutoHide v1.2.4 - 完全隐藏模式
 }
 
@@ -912,10 +945,29 @@ exitBossMode() {
     requireCtrl := originalRequireCtrl
     showIndicators := originalShowIndicators
     
+    ; 确保所有自动隐藏窗口的状态正确
+    Loop, Parse, autohideWindows, `,
+    {
+        curWinId := A_LoopField
+        if (curWinId != "" && autohide_%curWinId%) {
+            ; 确保窗口处于隐藏状态，并且状态变量正确
+            if (hidden_%curWinId%) {
+                ; 确保窗口在正确的隐藏位置
+                WinMove, ahk_id %curWinId%, , hidden_%curWinId%_x, hidden_%curWinId%_y
+                ; 确保显示状态标记为false
+                showing_%curWinId% := false
+            }
+        }
+    }
+    
     ; 重新创建指示器（如果启用）
     if (showIndicators) {
         Gosub, updateIndicators
     }
+    
+    ; 恢复托盘图标
+    Menu, tray, Icon  ; 先删除当前图标
+    Menu, tray, Icon, %A_ScriptDir%\winautohide.ico  ; 重新设置图标
     
     ; 更新托盘提示
     Gosub, updateTrayTooltip
@@ -961,7 +1013,7 @@ checkUserActivity() {
     
     ; 检查是否超过设定的无活动时间
     inactiveTime := (currentTime - lastActivityTime) / 1000 ; 转换为秒
-    if (inactiveTime >= autoHideDelay) {
+    if (inactiveTime >= autoHideDelay * 60) { ; autoHideDelay现在是分钟，需要转换为秒
         ; 自动进入完全隐藏模式
         enterBossMode()
         ; 重置活动时间，避免重复触发
@@ -1061,8 +1113,8 @@ watchCursor:
         }
     }
     
-    ; 修改后的窗口检测逻辑：只检测鼠标直接在自动隐藏窗口上的情况
-    ; 不再使用进程ID进行匹配，避免同一应用程序的其他窗口干扰
+    ; 修改后的窗口检测逻辑：检测鼠标直接在自动隐藏窗口上的情况
+    ; 这个逻辑作为区域检测的补充，允许直接点击隐藏窗口来显示
     if (autohide_%winId%) {
         ; 检查当前是否有全屏应用运行，如果有则跳过显示逻辑
         WinGet, activeWinId, ID, A
@@ -1074,7 +1126,7 @@ watchCursor:
         ; 如果未启用Ctrl要求，则只需要鼠标在窗口上就显示
         if ((requireCtrl && CtrlDown) || !requireCtrl) {
             WinGetPos %winId%_X, %winId%_Y, %winId%_W, %winId%_H, ahk_id %winId%
-            if (hidden_%winId% && !hideArea_%winId%_active) { ; 只处理非区域检测的隐藏窗口
+            if (hidden_%winId%) { ; 处理所有隐藏窗口，无论是否启用区域检测
                 previousActiveWindow := WinExist("A")
                 WinActivate, ahk_id %winId% ; activate the window
                 WinMove, ahk_id %winId%, , showing_%winId%_x, showing_%winId%_y
@@ -1100,11 +1152,16 @@ watchCursor:
             WinGetPos, %checkWinId%_X, %checkWinId%_Y, %checkWinId%_W, %checkWinId%_H, ahk_id %checkWinId%	; update the win pos
             ; 检测窗口是否被移动，如果移动了就完全取消自动隐藏状态
             ; 使用数值比较而不是字符串比较，避免类型问题
+            ; 添加容差值，避免因系统微调位置而误判为用户移动
             showingX := showing_%checkWinId%_x
             showingY := showing_%checkWinId%_y
             currentX := %checkWinId%_X
             currentY := %checkWinId%_Y
-            If (showingX != currentX || showingY != currentY) {
+            ; 设置容差值为5像素，避免系统微调导致的误判
+            tolerance := 5
+            deltaX := Abs(showingX - currentX)
+            deltaY := Abs(showingY - currentY)
+            If (deltaX > tolerance || deltaY > tolerance) {
             ; if win moved after showing then cancel autohide status completely
                 curWinId := checkWinId
                 WinGet winPhid, PID, ahk_id %checkWinId%
@@ -1428,53 +1485,49 @@ createSettingsGUI:
     return
 }
     
-    ; 创建设置界面
-    Gui, Settings:Add, Text, x20 y20 w300 h20, 基本设置：
-Gui, Settings:Add, Checkbox, x40 y50 w250 h20 vCtrlRequired gUpdateCtrlSetting, 需要按住Ctrl键才能显示隐藏窗口
-Gui, Settings:Add, Checkbox, x40 y80 w250 h20 vShowTrayDetails gUpdateTrayDetailsSetting, 托盘图标显示详细信息
-Gui, Settings:Add, Checkbox, x40 y110 w250 h20 vEnableDragHide gUpdateDragHideSetting, 启用拖拽隐藏功能
-Gui, Settings:Add, Checkbox, x40 y140 w250 h20 vShowIndicators gUpdateIndicatorsSetting, 显示边缘指示器
+    ; 创建设置界面 - 紧凑布局
     
-    ; 指示器自定义设置
-    Gui, Settings:Add, Text, x60 y170 w100 h20, 指示器样式：
-    Gui, Settings:Add, DropDownList, x160 y168 w120 vIndicatorStyle gUpdateIndicatorStyle, 默认|极简|完整
+    ; 基本设置分组框
+    Gui, Settings:Add, GroupBox, x10 y10 w480 h80, 基本设置
+    Gui, Settings:Add, Button, x20 y30 w18 h18 vCtrlHelp gShowCtrlHelp, ?
+    Gui, Settings:Add, Checkbox, x45 y30 w220 h18 vCtrlRequired gUpdateCtrlSetting, 需要按住Ctrl键才能显示隐藏窗口
+    Gui, Settings:Add, Button, x20 y50 w18 h18 vTrayHelp gShowTrayHelp, ?
+    Gui, Settings:Add, Checkbox, x45 y50 w220 h18 vShowTrayDetails gUpdateTrayDetailsSetting, 托盘图标显示详细信息
+    Gui, Settings:Add, Button, x20 y70 w18 h18 vDragHelp gShowDragHelp, ?
+    Gui, Settings:Add, Checkbox, x45 y70 w180 h18 vEnableDragHide gUpdateDragHideSetting, 启用拖拽隐藏功能
+    Gui, Settings:Add, Text, x230 y72 w60 h18, 拖拽占比：
+    Gui, Settings:Add, Slider, x290 y70 w120 h18 vDragHideRatio gUpdateDragHideRatio Range10-90 TickInterval10
+    Gui, Settings:Add, Text, x420 y72 w40 h18 vDragHideRatioText, %dragHideRatio%`%
     
-    Gui, Settings:Add, Text, x60 y200 w100 h20, 指示器颜色：
-    Gui, Settings:Add, DropDownList, x160 y198 w120 vIndicatorColor gUpdateIndicatorColor, 橙红色|蓝色|绿色|紫色|红色|黄色
+    ; 边缘指示器设置分组框
+    Gui, Settings:Add, GroupBox, x10 y100 w480 h80, 边缘指示器设置
+    Gui, Settings:Add, Button, x20 y120 w18 h18 vIndicatorHelp gShowIndicatorHelp, ?
+    Gui, Settings:Add, Checkbox, x45 y120 w200 h18 vShowIndicators gUpdateIndicatorsSetting, 显示边缘指示器
+    Gui, Settings:Add, Text, x30 y140 w50 h18, 样式：
+    Gui, Settings:Add, DropDownList, x80 y138 w80 vIndicatorStyle gUpdateIndicatorStyle, 默认|极简|完整
+    Gui, Settings:Add, Text, x180 y140 w40 h18, 颜色：
+    Gui, Settings:Add, DropDownList, x220 y138 w100 vIndicatorColor gUpdateIndicatorColor, 橙红色|蓝色|绿色|紫色|红色|黄色
+    Gui, Settings:Add, Text, x30 y160 w40 h18, 宽度：
+    Gui, Settings:Add, Slider, x70 y158 w120 h18 vIndicatorWidth gUpdateIndicatorWidth Range1-10 TickInterval1
+    Gui, Settings:Add, Text, x200 y160 w80 h18 vIndicatorWidthText, %indicatorWidth%px
     
-    Gui, Settings:Add, Text, x60 y230 w100 h20, 指示器宽度：
-    Gui, Settings:Add, Slider, x160 y228 w120 h20 vIndicatorWidth gUpdateIndicatorWidth Range1-10 TickInterval1
-    Gui, Settings:Add, Text, x290 y230 w30 h20 vIndicatorWidthText, %indicatorWidth%px
-    
-    ; 添加分隔线
-    Gui, Settings:Add, Text, x20 y260 w300 h1 0x10 ; SS_ETCHEDHORZ
-    
-    ; 老板键和自动隐藏设置
-    Gui, Settings:Add, Text, x20 y280 w300 h20, 高级功能：
-    Gui, Settings:Add, Checkbox, x40 y310 w250 h20 vEnableBossKey gUpdateBossKeySetting, 启用老板键功能
-    
-    Gui, Settings:Add, Text, x60 y340 w80 h20, 老板键快捷键：
-    Gui, Settings:Add, Edit, x140 y338 w100 h20 vBossKeyHotkey gUpdateBossKeyHotkey ReadOnly
-    Gui, Settings:Add, Button, x250 y337 w60 h22 vRecordHotkey gStartHotkeyRecord, 录入
-    Gui, Settings:Add, Text, x320 y340 w80 h20 vHotkeyStatus, 点击录入
-    
-    Gui, Settings:Add, Checkbox, x40 y370 w250 h20 vEnableAutoHide gUpdateAutoHideSetting, 启用自动隐藏功能
-    
-    Gui, Settings:Add, Text, x60 y400 w80 h20, 无操作时间：
-    Gui, Settings:Add, Edit, x140 y398 w60 h20 vAutoHideDelay gUpdateAutoHideDelay Number
-    Gui, Settings:Add, Text, x210 y400 w30 h20, 秒
-    
-    ; 添加分隔线
-    Gui, Settings:Add, Text, x20 y430 w300 h1 0x10 ; SS_ETCHEDHORZ
-    
-    ; 使用说明区域
-    Gui, Settings:Add, Text, x20 y450 w300 h20, 使用说明：
-    Gui, Settings:Add, Text, x40 y480 w280 h120, 使用快捷键 Ctrl+方向键 将当前窗口隐藏到屏幕边缘。`n将鼠标移动到边缘即可显示隐藏窗口。`n移动已显示的隐藏窗口将取消自动隐藏。`n启用拖拽隐藏后，按住Ctrl拖拽到边缘也可隐藏。`n边缘指示器会在有隐藏窗口的位置显示指示条。`n`n老板键：按设定快捷键进入完全隐藏模式，任何操作都不会显示窗口。`n自动隐藏：电脑无操作指定时间后自动进入完全隐藏模式。
+    ; 高级功能分组框
+    Gui, Settings:Add, GroupBox, x10 y190 w480 h100, 高级功能
+    Gui, Settings:Add, Button, x20 y210 w18 h18 vBossKeyHelp gShowBossKeyHelp, ?
+    Gui, Settings:Add, Checkbox, x45 y210 w200 h18 vEnableBossKey gUpdateBossKeySetting, 启用老板键功能
+    Gui, Settings:Add, Text, x30 y230 w60 h18, 老板键：
+    Gui, Settings:Add, Edit, x90 y228 w80 h18 vBossKeyHotkey ReadOnly
+    Gui, Settings:Add, Button, x180 y227 w40 h20 vRecordHotkey gStartHotkeyRecord, 录入
+    Gui, Settings:Add, Button, x20 y250 w18 h18 vAutoHideHelp gShowAutoHideHelp, ?
+    Gui, Settings:Add, Checkbox, x45 y250 w200 h18 vEnableAutoHide gUpdateAutoHideSetting, 启用自动隐藏功能
+    Gui, Settings:Add, Text, x30 y270 w80 h18, 无操作时间：
+    Gui, Settings:Add, Slider, x110 y268 w120 h18 vAutoHideDelay gUpdateAutoHideDelay Range1-60 TickInterval5
+    Gui, Settings:Add, Text, x240 y270 w60 h18 vAutoHideDelayText, %autoHideDelay%分钟
     
     ; 按钮区域
-    Gui, Settings:Add, Button, x40 y620 w80 h30 gShowAbout, 关于
-Gui, Settings:Add, Button, x140 y620 w80 h30 gSaveSettings, 保存
-Gui, Settings:Add, Button, x240 y620 w80 h30 gCloseSettings, 关闭
+    Gui, Settings:Add, Button, x120 y310 w80 h30 gShowAbout, 关于
+    Gui, Settings:Add, Button, x210 y310 w80 h30 gSaveSettings, 保存
+    Gui, Settings:Add, Button, x300 y310 w80 h30 gCloseSettings, 关闭
     
     ; 设置复选框状态
     GuiControl, Settings:, CtrlRequired, %requireCtrl%
@@ -1487,10 +1540,15 @@ Gui, Settings:Add, Button, x240 y620 w80 h30 gCloseSettings, 关闭
     ; 设置文本框的值
     GuiControl, Settings:, BossKeyHotkey, %bossKeyHotkey%
     GuiControl, Settings:, AutoHideDelay, %autoHideDelay%
+    GuiControl, Settings:, AutoHideDelayText, %autoHideDelay%分钟
     
     ; 设置指示器宽度滑块的值
     GuiControl, Settings:, IndicatorWidth, %indicatorWidth%
     GuiControl, Settings:, IndicatorWidthText, %indicatorWidth%px
+    
+    ; 设置拖拽隐藏占比滑块的值
+    GuiControl, Settings:, DragHideRatio, %dragHideRatio%
+    GuiControl, Settings:, DragHideRatioText, %dragHideRatio%`%
     
     ; 设置下拉列表的默认值
     ; 设置指示器样式下拉列表
@@ -1518,7 +1576,10 @@ Gui, Settings:Add, Button, x240 y620 w80 h30 gCloseSettings, 关闭
     }
     
     ; 显示设置窗口
-    Gui, Settings:Show, w360 h670, WinAutoHide 设置
+    Gui, Settings:Show, w500 h360, WinAutoHide 设置
+    
+    ; 启动滑块监控定时器，实现实时数值显示
+    SetTimer, MonitorSliders, 50
 return
 
 ; 实时更新Ctrl设置
@@ -1910,17 +1971,14 @@ return
 
 ; 更新自动隐藏延迟时间
 UpdateAutoHideDelay:
+    ; 获取自动隐藏延迟滑块的值
     GuiControlGet, newDelay, Settings:, AutoHideDelay
-    
-    ; 验证输入值
-    if (newDelay < 10) {
-        ; 静默恢复原值，不显示错误提示
-        GuiControl, Settings:, AutoHideDelay, %autoHideDelay%
-        return
-    }
     
     ; 更新延迟时间变量
     autoHideDelay := newDelay
+    
+    ; 更新显示文本
+    GuiControl, Settings:, AutoHideDelayText, %autoHideDelay%分钟
     
     ; 保存设置到配置文件
     IniWrite, %autoHideDelay%, %configFile%, Settings, AutoHideDelay
@@ -1994,6 +2052,21 @@ UpdateIndicatorWidth:
     Gosub, updateIndicators
 return
 
+; 实时更新拖拽隐藏占比设置
+UpdateDragHideRatio:
+    ; 获取拖拽隐藏占比滑块的值
+    GuiControlGet, newRatio, Settings:, DragHideRatio
+    
+    ; 更新拖拽隐藏占比变量
+    dragHideRatio := newRatio
+    
+    ; 更新显示文本
+    GuiControl, Settings:, DragHideRatioText, %dragHideRatio%`%
+    
+    ; 保存设置到配置文件
+    IniWrite, %dragHideRatio%, %configFile%, Settings, DragHideRatio
+return
+
 ; 实时更新指示器设置
 UpdateIndicatorsSetting:
     ; 获取指示器显示复选框的状态
@@ -2050,10 +2123,14 @@ return
        ; 获取指示器宽度滑块的值
        GuiControlGet, indicatorWidth, Settings:, IndicatorWidth
        
+       ; 获取拖拽隐藏占比滑块的值
+       GuiControlGet, dragHideRatio, Settings:, DragHideRatio
+       
        ; 保存设置到配置文件
        IniWrite, %requireCtrl%, %configFile%, Settings, RequireCtrl
        IniWrite, %showTrayDetails%, %configFile%, Settings, ShowTrayDetails
        IniWrite, %enableDragHide%, %configFile%, Settings, EnableDragHide
+       IniWrite, %dragHideRatio%, %configFile%, Settings, DragHideRatio
        IniWrite, %showIndicators%, %configFile%, Settings, ShowIndicators
        IniWrite, %indicatorColor%, %configFile%, Settings, IndicatorColor
        IniWrite, %indicatorStyle%, %configFile%, Settings, IndicatorStyle
@@ -2130,5 +2207,112 @@ return
 ; 关闭设置窗口
 CloseSettings:
 SettingsGuiClose:
+    ; 停止滑块监控定时器
+    SetTimer, MonitorSliders, Off
     Gui, Settings:Destroy
+return
+
+; 滑块监控定时器 - 实现实时数值显示
+MonitorSliders:
+    ; 检查设置窗口是否存在
+    IfWinNotExist, WinAutoHide 设置
+    {
+        SetTimer, MonitorSliders, Off
+        return
+    }
+    
+    ; 监控拖拽隐藏占比滑块
+    GuiControlGet, currentDragRatio, Settings:, DragHideRatio, , NoError
+    if (ErrorLevel = 0 && currentDragRatio != "" && currentDragRatio != dragHideRatio) {
+        GuiControl, Settings:, DragHideRatioText, %currentDragRatio%`%
+    }
+    
+    ; 监控指示器宽度滑块
+    GuiControlGet, currentIndicatorWidth, Settings:, IndicatorWidth, , NoError
+    if (ErrorLevel = 0 && currentIndicatorWidth != "" && currentIndicatorWidth != indicatorWidth) {
+        GuiControl, Settings:, IndicatorWidthText, %currentIndicatorWidth%px
+    }
+    
+    ; 监控自动隐藏延迟滑块
+    GuiControlGet, currentAutoHideDelay, Settings:, AutoHideDelay, , NoError
+    if (ErrorLevel = 0 && currentAutoHideDelay != "" && currentAutoHideDelay != autoHideDelay) {
+        GuiControl, Settings:, AutoHideDelayText, %currentAutoHideDelay%分钟
+    }
+return
+
+; 浮窗提示功能函数
+ShowCtrlHelp:
+    ShowHelpTooltip("启用后，需要按住Ctrl键才能显示已隐藏的窗口。`n这可以防止意外触发窗口显示。")
+return
+
+ShowTrayHelp:
+    ShowHelpTooltip("启用后，托盘图标会显示当前隐藏窗口的数量等详细信息。`n关闭后只显示简单的程序图标。")
+return
+
+ShowDragHelp:
+    ShowHelpTooltip("启用后，可以按住Ctrl键拖拽窗口到屏幕边缘来隐藏窗口。`n拖拽占比设置触发隐藏的边缘区域大小。")
+return
+
+ShowIndicatorHelp:
+    ShowHelpTooltip("启用后，在屏幕边缘显示指示器来标识隐藏窗口的位置。`n可以设置指示器的样式、颜色和宽度。")
+return
+
+ShowBossKeyHelp:
+    ShowHelpTooltip("启用后，可以设置一个快捷键来快速隐藏所有窗口。`n再次按下快捷键可以恢复所有窗口。")
+return
+
+ShowAutoHideHelp:
+    ShowHelpTooltip("启用后，当指定时间内没有操作时，会自动隐藏所有窗口。`n可以设置无操作时间的长度（1-60分钟）。")
+return
+
+; 显示帮助提示的通用函数
+ShowHelpTooltip(helpText) {
+    ; 停止之前的所有相关定时器
+    SetTimer, CheckMouseMove, Off
+    SetTimer, StartMouseCheck, Off
+    
+    ; 设置坐标模式
+    CoordMode, Mouse, Screen
+    CoordMode, ToolTip, Screen
+    
+    ; 获取当前鼠标位置并显示浮窗
+    MouseGetPos, mouseX, mouseY
+    ToolTip, %helpText%, mouseX + 15, mouseY + 15
+    
+    ; 记录初始鼠标位置
+    helpTooltipLastX := mouseX
+    helpTooltipLastY := mouseY
+    
+    ; 延迟500毫秒后启动检测，给浮窗稳定显示的时间
+    SetTimer, StartMouseCheck, 500
+}
+
+; 延迟启动鼠标移动检测
+StartMouseCheck:
+    SetTimer, StartMouseCheck, Off  ; 停止这个一次性定时器
+    
+    ; 重新获取当前鼠标位置作为基准位置
+    MouseGetPos, helpTooltipLastX, helpTooltipLastY
+    
+    SetTimer, CheckMouseMove, 100   ; 启动鼠标移动检测
+return
+
+; 检测鼠标移动并隐藏浮窗
+CheckMouseMove:
+    ; 获取当前鼠标位置
+    MouseGetPos, currentX, currentY
+    
+    ; 计算移动距离
+    deltaX := Abs(currentX - helpTooltipLastX)
+    deltaY := Abs(currentY - helpTooltipLastY)
+    
+    ; 如果鼠标移动超过30像素，隐藏浮窗
+    if (deltaX > 30 || deltaY > 30) {
+        ToolTip  ; 隐藏浮窗
+        SetTimer, CheckMouseMove, Off  ; 停止检测
+        SetTimer, StartMouseCheck, Off ; 停止延迟启动定时器
+        ; 重置变量
+        helpTooltipLastX := 0
+        helpTooltipLastY := 0
+    }
 return
