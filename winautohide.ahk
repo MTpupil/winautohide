@@ -81,6 +81,12 @@ pendingHideWinId := ""
 pendingHidePId := ""
 pendingHideMode := ""
 
+; 初始化自动隐藏窗口列表
+autohideWindows := ""
+
+; 强制确保关键变量初始化
+ensureAutohideWindowsInit()
+
 ; 初始化老板键和自动隐藏相关变量
 bossMode := false ; 完全隐藏模式状态
 lastActivityTime := A_TickCount ; 最后活动时间
@@ -161,6 +167,13 @@ createIndicator(winId, side) {
     
     ; 如果指示器功能被禁用，直接返回
     if (!showIndicators) {
+        return
+    }
+    
+    ; 检查窗口是否仍然存在
+    if (!WinExist("ahk_id " . winId)) {
+        ; 窗口已经不存在，清理相关状态
+        cleanupWindowState(winId)
         return
     }
     
@@ -343,14 +356,14 @@ createSingleIndicator(indicatorId, x, y, width, height, winTitle) {
     global
     
     ; 创建指示器GUI
-    Gui, Indicator%indicatorId%:New, +AlwaysOnTop -Caption +ToolWindow +LastFound, WinAutoHide指示器
+    Gui, Indicator%indicatorId%:New, +AlwaysOnTop -Caption +ToolWindow +LastFound -MaximizeBox -MinimizeBox, WinAutoHide指示器
     Gui, Indicator%indicatorId%:Color, %indicatorColor%  ; 使用自定义颜色
     
     ; 设置指示器窗口属性
     WinSet, ExStyle, +0x20, % "ahk_id " . WinExist()  ; WS_EX_TRANSPARENT - 鼠标穿透
     
     ; 显示指示器
-    Gui, Indicator%indicatorId%:Show, x%x% y%y% w%width% h%height% NoActivate
+    Gui, Indicator%indicatorId%:Show, x%x% y%y% w%width% h%height%
     
     ; 设置指示器提示信息
     WinGet, indicatorHwnd, ID, WinAutoHide指示器
@@ -368,11 +381,22 @@ destroyIndicator(winId) {
         ; 检查指示器样式，如果是极简模式需要销毁两个指示器
         if (indicator_%winId%_style = "minimal") {
             ; 极简模式：销毁两个小指示器
-            Gui, Indicator%winId%_1:Destroy
-            Gui, Indicator%winId%_2:Destroy
+            ; 检查GUI是否存在再销毁
+            Gui, Indicator%winId%_1:+LastFound
+            if (WinExist()) {
+                Gui, Indicator%winId%_1:Destroy
+            }
+            Gui, Indicator%winId%_2:+LastFound
+            if (WinExist()) {
+                Gui, Indicator%winId%_2:Destroy
+            }
         } else {
             ; 默认和完整模式：销毁单个指示器
-            Gui, Indicator%winId%:Destroy
+            ; 检查GUI是否存在再销毁
+            Gui, Indicator%winId%:+LastFound
+            if (WinExist()) {
+                Gui, Indicator%winId%:Destroy
+            }
         }
         
         ; 清除指示器信息
@@ -385,6 +409,10 @@ destroyIndicator(winId) {
 
 ; 更新所有指示器的显示状态
 updateIndicators:
+    ; 确保autohideWindows变量已初始化并清理空元素
+    ensureAutohideWindowsInit()
+    cleanAutohideWindowsList()
+    
     ; 如果指示器功能被禁用，销毁所有现有指示器
     if (!showIndicators) {
         Loop, Parse, autohideWindows, `,
@@ -402,6 +430,13 @@ updateIndicators:
     {
         curWinId := A_LoopField
         if (curWinId != "" && autohide_%curWinId% && hidden_%curWinId%) {
+            ; 检查窗口是否仍然存在
+            if (!WinExist("ahk_id " . curWinId)) {
+                ; 窗口已经不存在，清理相关状态
+                cleanupWindowState(curWinId)
+                continue
+            }
+            
             ; 如果窗口已隐藏但指示器不存在，创建指示器
             if (!indicator_%curWinId%_exists) {
                 ; 确定隐藏方向
@@ -428,6 +463,137 @@ updateIndicators:
         }
     }
 return
+
+; 确保autohideWindows变量已初始化的辅助函数
+ensureAutohideWindowsInit() {
+    global
+    if (autohideWindows = "") {
+        autohideWindows := ""
+    }
+}
+
+; 清理autohideWindows列表中的空元素
+cleanAutohideWindowsList() {
+    global
+    if (autohideWindows = "") {
+        return
+    }
+    
+    ; 重建列表，只包含非空元素
+    newList := ""
+    Loop, Parse, autohideWindows, `,
+    {
+        if (A_LoopField != "" && A_LoopField != 0) {
+            if (newList = "") {
+                newList := A_LoopField
+            } else {
+                newList := newList . "," . A_LoopField
+            }
+        }
+    }
+    autohideWindows := newList
+}
+
+; 安全地从autohideWindows列表中移除窗口ID
+removeWindowFromList(winId) {
+    global
+    
+    ; 参数验证
+    if (winId = "" || winId = 0 || winId = "0") {
+        return
+    }
+    
+    ; 确保列表已初始化
+    ensureAutohideWindowsInit()
+    
+    ; 如果列表为空，直接返回
+    if (autohideWindows = "") {
+        return
+    }
+    
+    ; 重建列表，排除要移除的窗口ID
+    newList := ""
+    Loop, Parse, autohideWindows, `,
+    {
+        ; 只保留不匹配的有效元素
+        if (A_LoopField != "" && A_LoopField != 0 && A_LoopField != winId) {
+            if (newList = "") {
+                newList := A_LoopField
+            } else {
+                newList := newList . "," . A_LoopField
+            }
+        }
+    }
+    autohideWindows := newList
+}
+
+; 安全地向autohideWindows列表中添加窗口ID
+addWindowToList(winId) {
+    global
+    
+    ; 参数验证
+    if (winId = "" || winId = 0 || winId = "0") {
+        return
+    }
+    
+    ; 确保列表已初始化
+    ensureAutohideWindowsInit()
+    
+    ; 检查是否已存在
+    if (autohideWindows != "") {
+        Loop, Parse, autohideWindows, `,
+        {
+            if (A_LoopField = winId) {
+                return  ; 已存在，不重复添加
+            }
+        }
+    }
+    
+    ; 添加到列表
+    if (autohideWindows = "") {
+        autohideWindows := winId
+    } else {
+        autohideWindows := autohideWindows . "," . winId
+    }
+}
+
+; 清理已关闭窗口的状态
+cleanupWindowState(winId) {
+    global
+    
+    ; 参数验证：如果winId为空或无效，直接返回
+    if (winId = "" || winId = 0 || winId = "0") {
+        return
+    }
+    
+    ; 销毁指示器
+    destroyIndicator(winId)
+    
+    ; 清理所有相关的全局变量
+    autohide_%winId% := false
+    hidden_%winId% := false
+    showing_%winId% := false
+    
+    ; 清理位置变量
+    %winId%_X := ""
+    %winId%_Y := ""
+    %winId%_W := ""
+    %winId%_H := ""
+    showing_%winId%_x := ""
+    showing_%winId%_y := ""
+    hidden_%winId%_x := ""
+    hidden_%winId%_y := ""
+    
+    ; 清理隐藏区域变量
+    hideArea_%winId%_active := false
+    hideArea_%winId%_left := ""
+    hideArea_%winId%_right := ""
+    hideArea_%winId%_top := ""
+    hideArea_%winId%_bottom := ""
+    
+    ; 从自动隐藏窗口列表中移除 - 使用安全的数组方式
+    removeWindowFromList(winId)
+}
 
 
 /*
@@ -540,6 +706,10 @@ return
  * 更新托盘图标提示信息
  */
 updateTrayTooltip:
+    ; 确保autohideWindows变量已初始化并清理空元素
+    ensureAutohideWindowsInit()
+    cleanAutohideWindowsList()
+    
     ; 根据设置决定显示简单还是详细的提示信息
     if (showTrayDetails) {
         ; 详细模式：显示隐藏窗口数量和列表
@@ -904,6 +1074,7 @@ enterBossMode() {
     showIndicators := false
     
     ; 确保所有自动隐藏窗口都被隐藏，并销毁所有指示器
+    ensureAutohideWindowsInit()
     Loop, Parse, autohideWindows, `,
     {
         curWinId := A_LoopField
@@ -946,6 +1117,7 @@ exitBossMode() {
     showIndicators := originalShowIndicators
     
     ; 确保所有自动隐藏窗口的状态正确
+    ensureAutohideWindowsInit()
     Loop, Parse, autohideWindows, `,
     {
         curWinId := A_LoopField
@@ -1035,6 +1207,10 @@ watchCursor:
         return ; 完全隐藏模式下，任何操作都不能显示窗口
     }
     
+    ; 确保autohideWindows变量已初始化并清理空元素
+    ensureAutohideWindowsInit()
+    cleanAutohideWindowsList()
+    
     MouseGetPos, mouseX, mouseY, winId ; get window under mouse pointer
     WinGet winPid, PID, ahk_id %winId% ; get the PID for process recognition
 
@@ -1094,19 +1270,25 @@ watchCursor:
                 
                 ; 检查Ctrl键要求
                 if ((requireCtrl && CtrlDown) || !requireCtrl) {
-                    ; 显示隐藏的窗口
-                    previousActiveWindow := WinExist("A")
-                    WinMove, ahk_id %checkWinId%, , showing_%checkWinId%_x, showing_%checkWinId%_y
-                WinActivate, ahk_id %checkWinId% ; 移动后再激活，避免位置变化
-                ; 更新窗口位置变量，确保移动检测的准确性
-                WinGetPos %checkWinId%_X, %checkWinId%_Y, %checkWinId%_W, %checkWinId%_H, ahk_id %checkWinId%
-                hidden_%checkWinId% := false
-                
-                ; 隐藏指示器（窗口显示时）
-                destroyIndicator(checkWinId)
-                
-                ; 标记此窗口为需要监控隐藏的状态
-                showing_%checkWinId% := true
+                    ; 检查窗口是否仍然存在
+                    if (WinExist("ahk_id " . checkWinId)) {
+                        ; 显示隐藏的窗口
+                        previousActiveWindow := WinExist("A")
+                        WinMove, ahk_id %checkWinId%, , showing_%checkWinId%_x, showing_%checkWinId%_y
+                        WinActivate, ahk_id %checkWinId% ; 移动后再激活，避免位置变化
+                        ; 更新窗口位置变量，确保移动检测的准确性
+                        WinGetPos %checkWinId%_X, %checkWinId%_Y, %checkWinId%_W, %checkWinId%_H, ahk_id %checkWinId%
+                        hidden_%checkWinId% := false
+                        
+                        ; 隐藏指示器（窗口显示时）
+                        destroyIndicator(checkWinId)
+                        
+                        ; 标记此窗口为需要监控隐藏的状态
+                        showing_%checkWinId% := true
+                    } else {
+                        ; 窗口已经不存在，清理相关状态
+                        cleanupWindowState(checkWinId)
+                    }
                     break ; 找到一个就退出循环
                 }
             }
@@ -1125,21 +1307,27 @@ watchCursor:
         ; 如果启用了Ctrl要求，则需要Ctrl+鼠标在窗口上才显示
         ; 如果未启用Ctrl要求，则只需要鼠标在窗口上就显示
         if ((requireCtrl && CtrlDown) || !requireCtrl) {
-            WinGetPos %winId%_X, %winId%_Y, %winId%_W, %winId%_H, ahk_id %winId%
-            if (hidden_%winId%) { ; 处理所有隐藏窗口，无论是否启用区域检测
-                previousActiveWindow := WinExist("A")
-                WinActivate, ahk_id %winId% ; activate the window
-                WinMove, ahk_id %winId%, , showing_%winId%_x, showing_%winId%_y
-                ; move it to 'showing' position
+            ; 检查窗口是否仍然存在
+            if (WinExist("ahk_id " . winId)) {
                 WinGetPos %winId%_X, %winId%_Y, %winId%_W, %winId%_H, ahk_id %winId%
-                ; update win pos after showing
-                hidden_%winId% := false
-                
-                ; 隐藏指示器（窗口显示时）
-                destroyIndicator(winId)
-                
-                ; 标记此窗口为需要监控隐藏的状态
-                showing_%winId% := true
+                if (hidden_%winId%) { ; 处理所有隐藏窗口，无论是否启用区域检测
+                    previousActiveWindow := WinExist("A")
+                    WinActivate, ahk_id %winId% ; activate the window
+                    WinMove, ahk_id %winId%, , showing_%winId%_x, showing_%winId%_y
+                    ; move it to 'showing' position
+                    WinGetPos %winId%_X, %winId%_Y, %winId%_W, %winId%_H, ahk_id %winId%
+                    ; update win pos after showing
+                    hidden_%winId% := false
+                    
+                    ; 隐藏指示器（窗口显示时）
+                    destroyIndicator(winId)
+                    
+                    ; 标记此窗口为需要监控隐藏的状态
+                    showing_%winId% := true
+                }
+            } else {
+                ; 窗口已经不存在，清理相关状态
+                cleanupWindowState(winId)
             }
         }
     }
@@ -1149,7 +1337,9 @@ watchCursor:
     {
         checkWinId := A_LoopField
         if (showing_%checkWinId% && !hidden_%checkWinId%) {
-            WinGetPos, %checkWinId%_X, %checkWinId%_Y, %checkWinId%_W, %checkWinId%_H, ahk_id %checkWinId%	; update the win pos
+            ; 检查窗口是否仍然存在
+            if (WinExist("ahk_id " . checkWinId)) {
+                WinGetPos, %checkWinId%_X, %checkWinId%_Y, %checkWinId%_W, %checkWinId%_H, ahk_id %checkWinId%	; update the win pos
             ; 检测窗口是否被移动，如果移动了就完全取消自动隐藏状态
             ; 使用数值比较而不是字符串比较，避免类型问题
             ; 添加容差值，避免因系统微调位置而误判为用户移动
@@ -1202,6 +1392,10 @@ watchCursor:
                     createIndicator(checkWinId, side)
                 }
             }
+            } else {
+                ; 窗口已经不存在，清理相关状态
+                cleanupWindowState(checkWinId)
+            }
         }
     }
 return
@@ -1233,12 +1427,20 @@ return
 
 toggleWindow:
     WinGet, curWinId, ID, A
+    
+    ; 验证窗口ID是否有效
+    if (curWinId = "" || curWinId = 0) {
+        return
+    }
+    
     WinGetClass, curWinCls, ahk_id %curWinId%
     if (curWinCls = "WorkerW"){	;ignore the "desktop" window
         return
     }
     WinGet, curWinPId, PID, A
-    autohideWindows = %autohideWindows%,%curWinId%
+    
+    ; 安全地添加窗口ID到列表中
+    addWindowToList(curWinId)
 
     if (autohide_%curWinId%) {
         Gosub, unautohide
@@ -1661,6 +1863,7 @@ UpdateIndicatorStyle:
     
     ; 重新创建所有指示器以应用新样式
     ; 先销毁所有现有指示器
+    ensureAutohideWindowsInit()
     Loop, Parse, autohideWindows, `,
     {
         curWinId := A_LoopField
@@ -2014,6 +2217,7 @@ UpdateIndicatorColor:
     
     ; 重新创建所有指示器以应用新颜色
     ; 先销毁所有现有指示器
+    ensureAutohideWindowsInit()
     Loop, Parse, autohideWindows, `,
     {
         curWinId := A_LoopField
@@ -2041,6 +2245,7 @@ UpdateIndicatorWidth:
     
     ; 重新创建所有指示器以应用新宽度
     ; 先销毁所有现有指示器
+    ensureAutohideWindowsInit()
     Loop, Parse, autohideWindows, `,
     {
         curWinId := A_LoopField
@@ -2189,7 +2394,7 @@ return
      toastY := A_ScreenHeight - 80
      
      ; 显示Toast通知
-     Gui, Toast:Show, x%toastX% y%toastY% w150 h45 NoActivate
+     Gui, Toast:Show, x%toastX% y%toastY% w150 h45
      
      ; 设置3秒后自动关闭
      SetTimer, CloseToast, 3000
