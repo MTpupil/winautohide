@@ -61,7 +61,6 @@ If (FileExist(configFile)) {
     IniRead, bossKeyHotkey, %configFile%, Settings, BossKeyHotkey, F9 ; 默认老板键为F9
     IniRead, enableAutoHide, %configFile%, Settings, EnableAutoHide, 0 ; 默认禁用自动隐藏
     IniRead, autoHideDelay, %configFile%, Settings, AutoHideDelay, 5 ; 默认5分钟无操作后自动隐藏
-    IniRead, enableChildWindowManagement, %configFile%, Settings, EnableChildWindowManagement, 1 ; 默认启用子窗口层级管理
 } else {
     requireCtrl := 1 ; 默认启用Ctrl要求
     showTrayDetails := 0 ; 默认显示详细信息
@@ -75,7 +74,6 @@ If (FileExist(configFile)) {
     bossKeyHotkey := "F9" ; 默认老板键为F9
     enableAutoHide := 0 ; 默认禁用自动隐藏
     autoHideDelay := 5 ; 默认5分钟无操作后自动隐藏
-    enableChildWindowManagement := 1 ; 默认启用子窗口层级管理
 }
 
 ; 初始化拖拽隐藏相关变量
@@ -127,11 +125,6 @@ if (enableDragHide) {
 ; 启动活动监控定时器（用于自动隐藏功能）
 if (enableAutoHide) {
     SetTimer, checkUserActivityTimer, 5000 ; 每5秒检查一次用户活动
-}
-
-; 启动子窗口监控定时器（用于子窗口层级管理）
-if (enableChildWindowManagement) {
-    SetTimer, checkChildWindows, 1000 ; 每1秒检查一次子窗口
 }
 
 /*
@@ -1407,145 +1400,6 @@ watchCursor:
     }
 return
 
-/*
- * 子窗口监控和层级管理功能
- * 检测隐藏窗口的子窗口，并确保子窗口显示在主窗口之上
- */
-checkChildWindows:
-    ; 如果功能被禁用，直接返回
-    if (!enableChildWindowManagement) {
-        return
-    }
-    
-    ; 遍历所有隐藏的窗口
-    Loop, Parse, autohideWindows, `,
-    {
-        hiddenWinId := A_LoopField
-        if (hiddenWinId != "" && autohide_%hiddenWinId% && hidden_%hiddenWinId%) {
-            ; 检查这个隐藏窗口是否有子窗口
-            checkAndManageChildWindows(hiddenWinId)
-        }
-    }
-return
-
-/*
- * 检测并管理指定窗口的子窗口
- * 参数: parentWinId - 父窗口ID
- */
-checkAndManageChildWindows(parentWinId) {
-    global
-    
-    ; 检查父窗口是否仍然存在
-    if (!WinExist("ahk_id " . parentWinId)) {
-        return
-    }
-    
-    ; 获取父窗口的进程ID
-    WinGet, parentPid, PID, ahk_id %parentWinId%
-    
-    ; 枚举所有窗口，查找可能的子窗口
-    WinGet, windowList, List
-    Loop, %windowList%
-    {
-        currentWinId := windowList%A_Index%
-        
-        ; 跳过父窗口本身
-        if (currentWinId = parentWinId) {
-            continue
-        }
-        
-        ; 检查窗口是否可见
-        WinGet, winState, MinMax, ahk_id %currentWinId%
-        if (winState = -1) { ; 窗口被最小化，跳过
-            continue
-        }
-        
-        ; 检查是否为子窗口或相关窗口
-        if (isChildOrRelatedWindow(currentWinId, parentWinId, parentPid)) {
-            ; 确保子窗口显示在父窗口之上
-            ensureChildWindowOnTop(currentWinId, parentWinId)
-        }
-    }
-}
-
-/*
- * 判断窗口是否为指定父窗口的子窗口或相关窗口
- * 参数: winId - 要检查的窗口ID
- * 参数: parentWinId - 父窗口ID  
- * 参数: parentPid - 父窗口进程ID
- * 返回: true表示是子窗口或相关窗口，false表示不是
- */
-isChildOrRelatedWindow(winId, parentWinId, parentPid) {
-    global
-    
-    ; 方法1: 检查窗口的Owner属性
-    ownerWinId := DllCall("GetWindow", "Ptr", winId, "UInt", 4) ; GW_OWNER = 4
-    if (ownerWinId = parentWinId) {
-        return true
-    }
-    
-    ; 方法2: 检查是否为同一进程的窗口
-    WinGet, winPid, PID, ahk_id %winId%
-    if (winPid = parentPid) {
-        ; 同一进程的窗口，进一步检查是否为弹出窗口或对话框
-        WinGetClass, winClass, ahk_id %winId%
-        WinGetTitle, winTitle, ahk_id %winId%
-        
-        ; 检查窗口类名，判断是否为常见的子窗口类型
-        if (InStr(winClass, "Dialog") || InStr(winClass, "Popup") 
-            || InStr(winClass, "#32770") ; 标准对话框类名
-            || winClass = "Chrome_WidgetWin_0" ; Chrome弹出窗口
-            || winClass = "MozillaDialogClass" ; Firefox对话框
-            || winClass = "ApplicationFrameWindow" ; Edge弹出窗口
-            || InStr(winTitle, "图片") || InStr(winTitle, "Image") 
-            || InStr(winTitle, "预览") || InStr(winTitle, "Preview")
-            || InStr(winTitle, "查看") || InStr(winTitle, "View")) {
-            return true
-        }
-        
-        ; 检查窗口样式，判断是否为弹出窗口
-        WinGet, winStyle, Style, ahk_id %winId%
-        WinGet, winExStyle, ExStyle, ahk_id %winId%
-        
-        ; 检查是否有WS_POPUP样式（弹出窗口）
-        if (winStyle & 0x80000000) { ; WS_POPUP
-            return true
-        }
-        
-        ; 检查是否有WS_EX_TOOLWINDOW样式（工具窗口）
-        if (winExStyle & 0x80) { ; WS_EX_TOOLWINDOW
-            return true
-        }
-    }
-    
-    return false
-}
-
-/*
- * 确保子窗口显示在父窗口之上
- * 参数: childWinId - 子窗口ID
- * 参数: parentWinId - 父窗口ID
- */
-ensureChildWindowOnTop(childWinId, parentWinId) {
-    global
-    
-    ; 检查子窗口是否仍然存在
-    if (!WinExist("ahk_id " . childWinId)) {
-        return
-    }
-    
-    ; 直接将子窗口提升到父窗口之上
-    ; 使用SetWindowPos API将子窗口设置为比父窗口更高的层级
-    ; SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE = 0x0013
-    DllCall("SetWindowPos", "ptr", childWinId, "ptr", parentWinId, "int", 0, "int", 0, "int", 0, "int", 0, "uint", 0x0013)
-    
-    ; 如果父窗口是置顶窗口，也将子窗口设置为置顶
-    WinGet, parentExStyle, ExStyle, ahk_id %parentWinId%
-    if (parentExStyle & 0x8) { ; WS_EX_TOPMOST
-        WinSet, AlwaysOnTop, On, ahk_id %childWinId%
-    }
-}
-
 
 /*
  * Hotkey implementation.
@@ -1860,31 +1714,28 @@ createSettingsGUI:
     Gui, Settings:Add, Text, x200 y160 w80 h18 vIndicatorWidthText, %indicatorWidth%px
     
     ; 高级功能分组框
-    Gui, Settings:Add, GroupBox, x10 y190 w480 h120, 高级功能
-    Gui, Settings:Add, Button, x20 y210 w18 h18 vChildWindowHelp gShowChildWindowHelp, ?
-    Gui, Settings:Add, Checkbox, x45 y210 w200 h18 vEnableChildWindowManagement gUpdateChildWindowSetting, 启用子窗口层级管理
-    Gui, Settings:Add, Button, x20 y230 w18 h18 vBossKeyHelp gShowBossKeyHelp, ?
-    Gui, Settings:Add, Checkbox, x45 y230 w200 h18 vEnableBossKey gUpdateBossKeySetting, 启用老板键功能
-    Gui, Settings:Add, Text, x30 y250 w60 h18, 老板键：
-    Gui, Settings:Add, Edit, x90 y248 w80 h18 vBossKeyHotkey ReadOnly
-    Gui, Settings:Add, Button, x180 y247 w40 h20 vRecordHotkey gStartHotkeyRecord, 录入
-    Gui, Settings:Add, Button, x20 y270 w18 h18 vAutoHideHelp gShowAutoHideHelp, ?
-    Gui, Settings:Add, Checkbox, x45 y270 w200 h18 vEnableAutoHide gUpdateAutoHideSetting, 启用自动隐藏功能
-    Gui, Settings:Add, Text, x30 y290 w80 h18, 无操作时间：
-    Gui, Settings:Add, Slider, x110 y288 w120 h18 vAutoHideDelay gUpdateAutoHideDelay Range1-60 TickInterval5
-    Gui, Settings:Add, Text, x240 y290 w60 h18 vAutoHideDelayText, %autoHideDelay%分钟
+    Gui, Settings:Add, GroupBox, x10 y190 w480 h100, 高级功能
+    Gui, Settings:Add, Button, x20 y210 w18 h18 vBossKeyHelp gShowBossKeyHelp, ?
+    Gui, Settings:Add, Checkbox, x45 y210 w200 h18 vEnableBossKey gUpdateBossKeySetting, 启用老板键功能
+    Gui, Settings:Add, Text, x30 y230 w60 h18, 老板键：
+    Gui, Settings:Add, Edit, x90 y228 w80 h18 vBossKeyHotkey ReadOnly
+    Gui, Settings:Add, Button, x180 y227 w40 h20 vRecordHotkey gStartHotkeyRecord, 录入
+    Gui, Settings:Add, Button, x20 y250 w18 h18 vAutoHideHelp gShowAutoHideHelp, ?
+    Gui, Settings:Add, Checkbox, x45 y250 w200 h18 vEnableAutoHide gUpdateAutoHideSetting, 启用自动隐藏功能
+    Gui, Settings:Add, Text, x30 y270 w80 h18, 无操作时间：
+    Gui, Settings:Add, Slider, x110 y268 w120 h18 vAutoHideDelay gUpdateAutoHideDelay Range1-60 TickInterval5
+    Gui, Settings:Add, Text, x240 y270 w60 h18 vAutoHideDelayText, %autoHideDelay%分钟
     
     ; 按钮区域
-    Gui, Settings:Add, Button, x120 y330 w80 h30 gShowAbout, 关于
-    Gui, Settings:Add, Button, x210 y330 w80 h30 gSaveSettings, 保存
-    Gui, Settings:Add, Button, x300 y330 w80 h30 gCloseSettings, 关闭
+    Gui, Settings:Add, Button, x120 y310 w80 h30 gShowAbout, 关于
+    Gui, Settings:Add, Button, x210 y310 w80 h30 gSaveSettings, 保存
+    Gui, Settings:Add, Button, x300 y310 w80 h30 gCloseSettings, 关闭
     
     ; 设置复选框状态
     GuiControl, Settings:, CtrlRequired, %requireCtrl%
     GuiControl, Settings:, ShowTrayDetails, %showTrayDetails%
     GuiControl, Settings:, EnableDragHide, %enableDragHide%
     GuiControl, Settings:, ShowIndicators, %showIndicators%
-    GuiControl, Settings:, EnableChildWindowManagement, %enableChildWindowManagement%
     GuiControl, Settings:, EnableBossKey, %enableBossKey%
     GuiControl, Settings:, EnableAutoHide, %enableAutoHide%
     
@@ -1991,21 +1842,6 @@ UpdateDragHideSetting:
     
     ; 更新指示器显示
     Gosub, updateIndicators
-return
-
-; 实时更新子窗口层级管理设置
-UpdateChildWindowSetting:
-    Gui, Settings:Submit, NoHide
-    enableChildWindowManagement := EnableChildWindowManagement
-    
-    ; 根据设置启用或禁用子窗口检测
-    if (enableChildWindowManagement) {
-        ; 启动子窗口检测定时器
-        SetTimer, checkChildWindows, 1000
-    } else {
-        ; 停止子窗口检测定时器
-        SetTimer, checkChildWindows, Off
-    }
 return
 
 ; 更新指示器样式设置
@@ -2504,7 +2340,6 @@ return
        IniWrite, %indicatorColor%, %configFile%, Settings, IndicatorColor
        IniWrite, %indicatorStyle%, %configFile%, Settings, IndicatorStyle
        IniWrite, %indicatorWidth%, %configFile%, Settings, IndicatorWidth
-       IniWrite, %enableChildWindowManagement%, %configFile%, Settings, EnableChildWindowManagement
        IniWrite, %enableBossKey%, %configFile%, Settings, EnableBossKey
        IniWrite, %bossKeyHotkey%, %configFile%, Settings, BossKeyHotkey
        IniWrite, %enableAutoHide%, %configFile%, Settings, EnableAutoHide
@@ -2625,10 +2460,6 @@ return
 
 ShowIndicatorHelp:
     ShowHelpTooltip("启用后，在屏幕边缘显示指示器来标识隐藏窗口的位置。`n可以设置指示器的样式、颜色和宽度。")
-return
-
-ShowChildWindowHelp:
-    ShowHelpTooltip("启用后，当检测到隐藏窗口的子窗口（如对话框、图片查看器等）时，`n会自动将子窗口置于最前端，避免被隐藏的主窗口遮挡。")
 return
 
 ShowBossKeyHelp:
