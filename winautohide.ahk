@@ -61,6 +61,7 @@ If (FileExist(configFile)) {
     IniRead, bossKeyHotkey, %configFile%, Settings, BossKeyHotkey, F9 ; 默认老板键为F9
     IniRead, enableAutoHide, %configFile%, Settings, EnableAutoHide, 0 ; 默认禁用自动隐藏
     IniRead, autoHideDelay, %configFile%, Settings, AutoHideDelay, 5 ; 默认5分钟无操作后自动隐藏
+    IniRead, enableChildWindowManagement, %configFile%, Settings, EnableChildWindowManagement, 1 ; 默认启用子窗口智能管理
 } else {
     requireCtrl := 1 ; 默认启用Ctrl要求
     showTrayDetails := 0 ; 默认显示详细信息
@@ -74,6 +75,7 @@ If (FileExist(configFile)) {
     bossKeyHotkey := "F9" ; 默认老板键为F9
     enableAutoHide := 0 ; 默认禁用自动隐藏
     autoHideDelay := 5 ; 默认5分钟无操作后自动隐藏
+    enableChildWindowManagement := 1 ; 默认启用子窗口智能管理
 }
 
 ; 初始化拖拽隐藏相关变量
@@ -97,6 +99,10 @@ isRecordingHotkey := false ; 热键录入状态
 ; 初始化帮助浮窗相关变量
 helpTooltipLastX := 0 ; 帮助浮窗显示时的鼠标X坐标
 helpTooltipLastY := 0 ; 帮助浮窗显示时的鼠标Y坐标
+
+; 初始化子窗口智能管理相关变量
+childWindowList := "" ; 当前检测到的子窗口列表
+parentWindowStates := "" ; 父窗口的置顶状态记录
 
 /*
  * Hotkey bindings - 使用Ctrl+方向键
@@ -125,6 +131,11 @@ if (enableDragHide) {
 ; 启动活动监控定时器（用于自动隐藏功能）
 if (enableAutoHide) {
     SetTimer, checkUserActivityTimer, 5000 ; 每5秒检查一次用户活动
+}
+
+; 启动子窗口状态监控定时器
+if (enableChildWindowManagement) {
+    SetTimer, monitorChildWindows, 1000 ; 每1秒检查一次子窗口状态
 }
 
 /*
@@ -593,6 +604,178 @@ cleanupWindowState(winId) {
     
     ; 从自动隐藏窗口列表中移除 - 使用安全的数组方式
     removeWindowFromList(winId)
+}
+
+/*
+ * 子窗口智能管理功能
+ * 解决隐藏窗口置顶状态遮挡子窗口的问题
+ */
+
+; 获取指定窗口的活跃子窗口列表
+getActiveChildWindows(parentWinId) {
+    global
+    childWindowCount := 0
+    
+    ; 清理之前的子窗口记录
+    Loop, 50 { ; 假设最多50个子窗口
+        foundChildWindow_%A_Index% := ""
+    }
+    
+    ; 如果功能被禁用，直接返回0
+    if (!enableChildWindowManagement) {
+        return childWindowCount
+    }
+    
+    ; 参数验证
+    if (parentWinId = "" || parentWinId = 0) {
+        return childWindowCount
+    }
+    
+    ; 获取父窗口的进程ID，用于检测同进程窗口
+    WinGet, parentPID, PID, ahk_id %parentWinId%
+    if (!parentPID) {
+        return childWindowCount
+    }
+    
+    ; 枚举所有窗口，查找子窗口和相关窗口
+    WinGet, windowList, List
+    Loop, %windowList%
+    {
+        currentWinId := windowList%A_Index%
+        
+        ; 跳过父窗口本身
+        if (currentWinId = parentWinId) {
+            continue
+        }
+        
+        ; 检查是否为真正的子窗口（方法1：GetParent API）
+        parentHandle := DllCall("GetParent", "ptr", currentWinId, "ptr")
+        isDirectChild := (parentHandle = parentWinId)
+        
+        ; 检查是否为同进程的相关窗口（方法2：进程ID匹配）
+        WinGet, currentPID, PID, ahk_id %currentWinId%
+        isSameProcess := (currentPID = parentPID)
+        
+        ; 必须是子窗口或同进程窗口之一
+        if (!isDirectChild && !isSameProcess) {
+            continue
+        }
+        
+        ; 检查窗口是否可见且不是最小化状态
+        WinGet, winState, MinMax, ahk_id %currentWinId%
+        if (winState = -1) { ; 最小化状态
+            continue
+        }
+        
+        ; 检查窗口是否可见
+        WinGetPos, winX, winY, winW, winH, ahk_id %currentWinId%
+        if (winW <= 0 || winH <= 0) {
+            continue
+        }
+        
+        ; 检查窗口类型，排除一些特殊窗口
+        WinGetClass, winClass, ahk_id %currentWinId%
+        if (winClass = "Shell_TrayWnd" || winClass = "DV2ControlHost" 
+            || winClass = "WorkerW" || winClass = "Progman") {
+            continue
+        }
+        
+        ; 检查窗口是否真正可见（不是隐藏状态）
+        if (!DllCall("IsWindowVisible", "ptr", currentWinId)) {
+            continue
+        }
+        
+        ; 对于同进程窗口，需要额外验证是否为用户可见的主窗口
+        if (isSameProcess && !isDirectChild) {
+            ; 检查窗口标题，排除无标题的后台窗口
+            WinGetTitle, winTitle, ahk_id %currentWinId%
+            if (winTitle = "") {
+                continue
+            }
+            
+            ; 检查窗口样式，确保是主窗口而不是工具窗口
+            WinGet, winExStyle, ExStyle, ahk_id %currentWinId%
+            isToolWindow := (winExStyle & 0x80) ; WS_EX_TOOLWINDOW
+            if (isToolWindow) {
+                continue ; 跳过工具窗口
+            }
+        }
+        
+        ; 将符合条件的子窗口添加到全局列表
+        childWindowCount++
+        foundChildWindow_%childWindowCount% := currentWinId
+    }
+    
+    return childWindowCount
+}
+
+; 检测指定窗口是否有活跃的子窗口或相关窗口
+hasActiveChildWindows(parentWinId) {
+    childCount := getActiveChildWindows(parentWinId)
+    return (childCount > 0)
+}
+
+; 为隐藏窗口调整置顶状态以适应子窗口
+adjustTopMostForChildWindows(parentWinId) {
+    global
+    
+    ; 如果功能被禁用，直接返回
+    if (!enableChildWindowManagement) {
+        return
+    }
+    
+    ; 检查是否有活跃的子窗口，并获取子窗口数量
+    childCount := getActiveChildWindows(parentWinId)
+    hasChildren := (childCount > 0)
+    
+    if (hasChildren) {
+        ; 有子窗口时，降低父窗口的层级但保持在普通窗口之上
+        ; 使用 HWND_TOP (0) 而不是 HWND_TOPMOST (-1)
+        WinSet, AlwaysOnTop, Off, ahk_id %parentWinId%
+        DllCall("SetWindowPos", "ptr", parentWinId, "ptr", 0, "int", 0, "int", 0, "int", 0, "int", 0, "uint", 0x0013)
+        
+        ; 主动取消所有子窗口的置顶状态，防止它们被应用程序设置为置顶
+        Loop, %childCount% {
+            childWinId := foundChildWindow_%A_Index%
+            
+            ; 检查子窗口是否被设置为置顶
+            WinGet, winExStyle, ExStyle, ahk_id %childWinId%
+            isTopMost := (winExStyle & 0x8) ; WS_EX_TOPMOST
+            
+            if (isTopMost) {
+                ; 取消子窗口的置顶状态
+                WinSet, AlwaysOnTop, Off, ahk_id %childWinId%
+                DllCall("SetWindowPos", "ptr", childWinId, "ptr", 0, "int", 0, "int", 0, "int", 0, "int", 0, "uint", 0x0013)
+                
+                ; 记录我们修改过的子窗口，以便后续恢复
+                childWindowStates_%childWinId% := "topmost_removed"
+            }
+        }
+        
+        ; 记录状态变化
+        parentWindowStates_%parentWinId% := "adjusted"
+    } else {
+        ; 没有子窗口时，恢复完全置顶状态
+        if (parentWindowStates_%parentWinId% = "adjusted") {
+            WinSet, AlwaysOnTop, On, ahk_id %parentWinId%
+            DllCall("SetWindowPos", "ptr", parentWinId, "ptr", -1, "int", 0, "int", 0, "int", 0, "int", 0, "uint", 0x0013)
+            
+            ; 清除状态记录
+            parentWindowStates_%parentWinId% := ""
+        }
+    }
+}
+
+; 清理子窗口管理状态
+cleanupChildWindowState(parentWinId) {
+    global
+    
+    ; 清理父窗口状态记录
+    parentWindowStates_%parentWinId% := ""
+    
+    ; 清理所有相关子窗口的状态记录
+    ; 注意：这里不恢复子窗口的置顶状态，因为窗口可能已经关闭
+    ; 或者用户希望保持当前状态
 }
 
 
@@ -1198,6 +1381,31 @@ checkUserActivityTimer:
     checkUserActivity()
 return
 
+; 子窗口状态监控定时器
+monitorChildWindows:
+    ; 如果功能被禁用或处于完全隐藏模式，直接返回
+    if (!enableChildWindowManagement || bossMode) {
+        return
+    }
+    
+    ; 遍历所有隐藏的窗口，检查子窗口状态
+    Loop, Parse, autohideWindows, `,
+    {
+        currentWinId := A_LoopField
+        if (currentWinId != "" && autohide_%currentWinId% && hidden_%currentWinId%) {
+            ; 检查窗口是否仍然存在
+            if (WinExist("ahk_id " . currentWinId)) {
+                ; 调整置顶状态以适应子窗口
+                adjustTopMostForChildWindows(currentWinId)
+            } else {
+                ; 窗口已经不存在，清理状态
+                cleanupWindowState(currentWinId)
+                cleanupChildWindowState(currentWinId)
+            }
+        }
+    }
+return
+
 /*
  * Timer implementation.
  */
@@ -1604,6 +1812,11 @@ workWindow:
     if (isSensitiveWindow) {
         WinSet, Redraw,, ahk_id %curWinId%
     }
+    
+    ; 集成子窗口智能管理：检查是否有子窗口需要调整置顶状态
+    if (enableChildWindowManagement) {
+        adjustTopMostForChildWindows(curWinId)
+    }
 return
 
 unworkWindow:
@@ -1674,6 +1887,11 @@ unworkWindow:
     if (isSensitiveWindow) {
         WinSet, Redraw,, ahk_id %curWinId%
     }
+    
+    ; 清理子窗口管理状态：窗口恢复显示时清理相关状态
+    if (enableChildWindowManagement) {
+        cleanupChildWindowState(curWinId)
+    }
 return
 
 /*
@@ -1714,7 +1932,7 @@ createSettingsGUI:
     Gui, Settings:Add, Text, x200 y160 w80 h18 vIndicatorWidthText, %indicatorWidth%px
     
     ; 高级功能分组框
-    Gui, Settings:Add, GroupBox, x10 y190 w480 h100, 高级功能
+    Gui, Settings:Add, GroupBox, x10 y190 w480 h120, 高级功能
     Gui, Settings:Add, Button, x20 y210 w18 h18 vBossKeyHelp gShowBossKeyHelp, ?
     Gui, Settings:Add, Checkbox, x45 y210 w200 h18 vEnableBossKey gUpdateBossKeySetting, 启用老板键功能
     Gui, Settings:Add, Text, x30 y230 w60 h18, 老板键：
@@ -1725,11 +1943,13 @@ createSettingsGUI:
     Gui, Settings:Add, Text, x30 y270 w80 h18, 无操作时间：
     Gui, Settings:Add, Slider, x110 y268 w120 h18 vAutoHideDelay gUpdateAutoHideDelay Range1-60 TickInterval5
     Gui, Settings:Add, Text, x240 y270 w60 h18 vAutoHideDelayText, %autoHideDelay%分钟
+    Gui, Settings:Add, Button, x20 y290 w18 h18 vChildWindowHelp gShowChildWindowHelp, ?
+    Gui, Settings:Add, Checkbox, x45 y290 w300 h18 vEnableChildWindowManagement gUpdateChildWindowSetting, 启用子窗口智能管理（防止子窗口被父窗口遮挡）
     
     ; 按钮区域
-    Gui, Settings:Add, Button, x120 y310 w80 h30 gShowAbout, 关于
-    Gui, Settings:Add, Button, x210 y310 w80 h30 gSaveSettings, 保存
-    Gui, Settings:Add, Button, x300 y310 w80 h30 gCloseSettings, 关闭
+    Gui, Settings:Add, Button, x120 y330 w80 h30 gShowAbout, 关于
+    Gui, Settings:Add, Button, x210 y330 w80 h30 gSaveSettings, 保存
+    Gui, Settings:Add, Button, x300 y330 w80 h30 gCloseSettings, 关闭
     
     ; 设置复选框状态
     GuiControl, Settings:, CtrlRequired, %requireCtrl%
@@ -1738,6 +1958,7 @@ createSettingsGUI:
     GuiControl, Settings:, ShowIndicators, %showIndicators%
     GuiControl, Settings:, EnableBossKey, %enableBossKey%
     GuiControl, Settings:, EnableAutoHide, %enableAutoHide%
+    GuiControl, Settings:, EnableChildWindowManagement, %enableChildWindowManagement%
     
     ; 设置文本框的值
     GuiControl, Settings:, BossKeyHotkey, %bossKeyHotkey%
@@ -2192,6 +2413,25 @@ UpdateAutoHideDelay:
     }
 return
 
+; 更新子窗口智能管理设置
+UpdateChildWindowSetting:
+    GuiControlGet, enableChildWindowManagement, Settings:, EnableChildWindowManagement
+    
+    ; 保存设置到配置文件
+    IniWrite, %enableChildWindowManagement%, %configFile%, Settings, EnableChildWindowManagement
+    
+    ; 如果禁用了子窗口管理，清理所有相关状态
+    if (!enableChildWindowManagement) {
+        ; 清理所有父窗口状态记录
+        for parentId in parentWindowStates {
+            cleanupChildWindowState(parentId)
+        }
+        ; 清空状态记录
+        parentWindowStates := {}
+        childWindowList := {}
+    }
+return
+
 ; 更新指示器颜色设置
 UpdateIndicatorColor:
     ; 获取指示器颜色下拉列表的值
@@ -2468,6 +2708,10 @@ return
 
 ShowAutoHideHelp:
     ShowHelpTooltip("启用后，当指定时间内没有操作时，会自动隐藏所有窗口。`n可以设置无操作时间的长度（1-60分钟）。")
+return
+
+ShowChildWindowHelp:
+    ShowHelpTooltip("启用后，当隐藏的父窗口有子窗口打开时（如图片查看器、视频播放器等），`n会智能调整父窗口的置顶状态，防止子窗口被遮挡。`n这样可以确保子窗口正常显示，同时保持父窗口的隐藏效果。")
 return
 
 ; 显示帮助提示的通用函数
