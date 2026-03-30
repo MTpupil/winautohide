@@ -1,5 +1,5 @@
 /*
- * winautohide v1.2.3 modified.
+ * winautohide v1.3.0 modified.
  * 新增功能：
  * 1. 必须按住Ctrl键时鼠标移上去窗口才会出现，单纯鼠标移上去不显示，防止误触
  * 2. 新增右键菜单开关，可启用/禁用Ctrl键要求，状态会保存
@@ -19,6 +19,12 @@
  * 16. 优化完全隐藏功能，隐藏时会把托盘图标一起隐藏
  * 17. 优化退出功能，退出时候会把所有窗口最小化而不是全部显示
  * 18. 优化设置页面布局，避免设置项太多导致页面过长
+ * 19. 修复微信窗口识别问题，支持Qt类窗口的识别
+ * 20. 修复微信窗口隐藏时出现白边的问题
+ * 21. 优化微信子窗口管理，确保子窗口不被父窗口遮挡
+ * 22. 新增隐藏任务栏预览功能（Alt+Tab中不显示）
+ * 23. 新增隐藏通知区域功能
+ * 24. 修复退出时最小化窗口跑到屏幕左下角的问题
  *
  * This program and its source are in the public domain.
  * Contact BoD@JRAF.org for more information.
@@ -37,6 +43,7 @@
  * 2025-10-25: v1.2.1: fixed race condition in multi-window fast switching, implemented per-window state tracking
  * 2025-10-25: v1.2.3: Fix the bug in the drag-and-hide function, add a mouse release waiting mechanism to avoid drag conflicts
  * 2025-10-25: v1.2.4: Enhanced exit handling - hidden windows are minimized instead of restored when program exits, added area detection for all directions to prevent indicator blocking
+ * 2026-03-30: v1.3.0: Fixed WeChat window recognition and white border issues, optimized child window management, added taskbar preview and notification area hide options
  */
 CoordMode, Mouse, Screen		;MouseGetPos relative to Screen
 #SingleInstance ignore
@@ -62,6 +69,8 @@ If (FileExist(configFile)) {
     IniRead, enableAutoHide, %configFile%, Settings, EnableAutoHide, 0 ; 默认禁用自动隐藏
     IniRead, autoHideDelay, %configFile%, Settings, AutoHideDelay, 5 ; 默认5分钟无操作后自动隐藏
     IniRead, enableChildWindowManagement, %configFile%, Settings, EnableChildWindowManagement, 1 ; 默认启用子窗口智能管理
+    IniRead, hideFromTaskbarPreview, %configFile%, Settings, HideFromTaskbarPreview, 1 ; 默认隐藏任务栏预览（Alt+Tab）
+    IniRead, hideFromNotifications, %configFile%, Settings, HideFromNotifications, 1 ; 默认隐藏通知区域
 } else {
     requireCtrl := 1 ; 默认启用Ctrl要求
     showTrayDetails := 0 ; 默认显示详细信息
@@ -76,6 +85,8 @@ If (FileExist(configFile)) {
     enableAutoHide := 0 ; 默认禁用自动隐藏
     autoHideDelay := 5 ; 默认5分钟无操作后自动隐藏
     enableChildWindowManagement := 1 ; 默认启用子窗口智能管理
+    hideFromTaskbarPreview := 1 ; 默认隐藏任务栏预览（Alt+Tab）
+    hideFromNotifications := 1 ; 默认隐藏通知区域
 }
 
 ; 初始化拖拽隐藏相关变量
@@ -631,11 +642,19 @@ getActiveChildWindows(parentWinId) {
         return childWindowCount
     }
     
-    ; 获取父窗口的进程ID，用于检测同进程窗口
+    ; 获取父窗口的进程ID和类名，用于检测同进程窗口和微信特殊处理
     WinGet, parentPID, PID, ahk_id %parentWinId%
+    WinGetClass, parentClass, ahk_id %parentWinId%
+    WinGetTitle, parentTitle, ahk_id %parentWinId%
+    
     if (!parentPID) {
         return childWindowCount
     }
+    
+    ; 检查是否为微信窗口
+    ; 检测条件：类名包含Qt、标题包含微信、或者进程名是WeChat
+    WinGet, parentProcessName, ProcessName, ahk_id %parentWinId%
+    isWeChatWindow := (InStr(parentClass, "Qt") || InStr(parentTitle, "微信") || InStr(parentProcessName, "WeChat"))
     
     ; 枚举所有窗口，查找子窗口和相关窗口
     WinGet, windowList, List
@@ -687,17 +706,20 @@ getActiveChildWindows(parentWinId) {
         
         ; 对于同进程窗口，需要额外验证是否为用户可见的主窗口
         if (isSameProcess && !isDirectChild) {
-            ; 检查窗口标题，排除无标题的后台窗口
-            WinGetTitle, winTitle, ahk_id %currentWinId%
-            if (winTitle = "") {
-                continue
-            }
-            
-            ; 检查窗口样式，确保是主窗口而不是工具窗口
-            WinGet, winExStyle, ExStyle, ahk_id %currentWinId%
-            isToolWindow := (winExStyle & 0x80) ; WS_EX_TOOLWINDOW
-            if (isToolWindow) {
-                continue ; 跳过工具窗口
+            ; 对于微信窗口，放宽验证条件，因为微信的子窗口可能没有标题或样式特殊
+            if (!isWeChatWindow) {
+                ; 检查窗口标题，排除无标题的后台窗口
+                WinGetTitle, winTitle, ahk_id %currentWinId%
+                if (winTitle = "") {
+                    continue
+                }
+                
+                ; 检查窗口样式，确保是主窗口而不是工具窗口
+                WinGet, winExStyle, ExStyle, ahk_id %currentWinId%
+                isToolWindow := (winExStyle & 0x80) ; WS_EX_TOOLWINDOW
+                if (isToolWindow) {
+                    continue ; 跳过工具窗口
+                }
             }
         }
         
@@ -724,32 +746,41 @@ adjustTopMostForChildWindows(parentWinId) {
         return
     }
     
+    ; 获取父窗口的类名，检查是否为微信窗口
+    WinGetClass, parentClass, ahk_id %parentWinId%
+    WinGetTitle, parentTitle, ahk_id %parentWinId%
+    WinGet, parentProcessName, ProcessName, ahk_id %parentWinId%
+    isWeChatWindow := (InStr(parentClass, "Qt") || InStr(parentTitle, "微信") || InStr(parentProcessName, "WeChat"))
+    
     ; 检查是否有活跃的子窗口，并获取子窗口数量
     childCount := getActiveChildWindows(parentWinId)
     hasChildren := (childCount > 0)
     
     if (hasChildren) {
-        ; 有子窗口时，降低父窗口的层级但保持在普通窗口之上
-        ; 使用 HWND_TOP (0) 而不是 HWND_TOPMOST (-1)
-        WinSet, AlwaysOnTop, Off, ahk_id %parentWinId%
-        DllCall("SetWindowPos", "ptr", parentWinId, "ptr", 0, "int", 0, "int", 0, "int", 0, "int", 0, "uint", 0x0013)
-        
-        ; 主动取消所有子窗口的置顶状态，防止它们被应用程序设置为置顶
-        Loop, %childCount% {
-            childWinId := foundChildWindow_%A_Index%
+        ; 有子窗口时的处理逻辑
+        if (isWeChatWindow) {
+            ; 对于微信窗口，采用特殊处理：
+            ; 1. 保持父窗口的置顶状态
+            ; 2. 主动把所有子窗口强制置顶，确保它们显示在父窗口前面
+            WinSet, AlwaysOnTop, On, ahk_id %parentWinId%
+            DllCall("SetWindowPos", "ptr", parentWinId, "ptr", -1, "int", 0, "int", 0, "int", 0, "int", 0, "uint", 0x0013)
             
-            ; 检查子窗口是否被设置为置顶
-            WinGet, winExStyle, ExStyle, ahk_id %childWinId%
-            isTopMost := (winExStyle & 0x8) ; WS_EX_TOPMOST
-            
-            if (isTopMost) {
-                ; 取消子窗口的置顶状态
-                WinSet, AlwaysOnTop, Off, ahk_id %childWinId%
-                DllCall("SetWindowPos", "ptr", childWinId, "ptr", 0, "int", 0, "int", 0, "int", 0, "int", 0, "uint", 0x0013)
-                
-                ; 记录我们修改过的子窗口，以便后续恢复
-                childWindowStates_%childWinId% := "topmost_removed"
+            ; 遍历所有子窗口，把它们强制置顶到最前面
+            Loop, %childCount% {
+                childWinId := foundChildWindow_%A_Index%
+                if (childWinId != "") {
+                    ; 强制子窗口置顶，确保显示在父窗口前面
+                    WinSet, AlwaysOnTop, On, ahk_id %childWinId%
+                    ; 使用 HWND_TOPMOST 并设置 SWP_NOMOVE | SWP_NOSIZE
+                    DllCall("SetWindowPos", "ptr", childWinId, "ptr", -1, "int", 0, "int", 0, "int", 0, "int", 0, "uint", 0x0013)
+                    ; 再调用一次确保子窗口在最顶层
+                    DllCall("SetWindowPos", "ptr", childWinId, "ptr", 0, "int", 0, "int", 0, "int", 0, "int", 0, "uint", 0x0003)
+                }
             }
+        } else {
+            ; 对于非微信窗口，保持原有的处理逻辑
+            WinSet, AlwaysOnTop, Off, ahk_id %parentWinId%
+            DllCall("SetWindowPos", "ptr", parentWinId, "ptr", 0, "int", 0, "int", 0, "int", 0, "int", 0, "uint", 0x0013)
         }
         
         ; 记录状态变化
@@ -1059,6 +1090,17 @@ minimizeHiddenWindows:
             ; 如果窗口是隐藏状态，先恢复到原位置再最小化
             if (hidden_%curWinId%) {
                 WinMove, ahk_id %curWinId%, , orig_%curWinId%_x, orig_%curWinId%_y
+            }
+            
+            ; 在最小化之前，确保恢复 WS_EX_APPWINDOW 标志
+            ; 这样 Windows 才知道把窗口最小化到哪个任务栏按钮
+            if (hideFromTaskbarPreview) {
+                savedExStyle := originalExStyle_%curWinId%
+                if (savedExStyle != "") {
+                    ; 确保包含 WS_EX_APPWINDOW 标志
+                    newExStyle := savedExStyle | 0x00040000
+                    WinSet, ExStyle, %newExStyle%, ahk_id %curWinId%
+                }
             }
             
             ; 将窗口最小化
@@ -1755,8 +1797,11 @@ return
 
 workWindow:
     DetectHiddenWindows, On
+    
     ; 检查窗口是否有效，避免对系统窗口进行操作
     WinGetClass, winClass, ahk_id %curWinId%
+    WinGetTitle, winTitle, ahk_id %curWinId%
+    
     if (winClass = "Shell_TrayWnd" || winClass = "DV2ControlHost") {
         ; 跳过任务栏和系统窗口
         return
@@ -1766,10 +1811,32 @@ workWindow:
     WinGet, originalExStyle_%curWinId%, ExStyle, ahk_id %curWinId%
     WinGet, originalStyle_%curWinId%, Style, ahk_id %curWinId%
     
-    ; 检查是否为浏览器或命令行窗口，这些窗口对样式修改敏感
+    ; 根据设置隐藏任务栏预览（Alt+Tab）和通知区域
+    if (hideFromTaskbarPreview || hideFromNotifications) {
+        currentExStyle := originalExStyle_%curWinId%
+        
+        if (hideFromTaskbarPreview) {
+            ; 移除 WS_EX_APPWINDOW 标志，防止窗口在Alt+Tab中显示预览
+            ; WS_EX_APPWINDOW = 0x00040000
+            currentExStyle := currentExStyle & ~0x00040000
+        }
+        
+        if (hideFromNotifications) {
+            ; 添加 WS_EX_TOOLWINDOW 标志，使窗口不在通知区域显示
+            ; WS_EX_TOOLWINDOW = 0x00000080
+            currentExStyle := currentExStyle | 0x00000080
+        }
+        
+        ; 应用修改后的ExStyle
+        WinSet, ExStyle, %currentExStyle%, ahk_id %curWinId%
+    }
+    
+    ; 检查是否为浏览器、命令行或微信窗口，这些窗口对样式修改敏感
     ; 浏览器窗口类名：Chrome系列、Firefox、Edge、Opera等
     ; 命令行窗口类名：ConsoleWindowClass
+    ; 微信窗口类名：WeChat、Chrome_WidgetWin等
     isSensitiveWindow := false
+    isWeChatWindow := false
     ; Chrome系列浏览器
     if (winClass = "Chrome_WidgetWin_1" || winClass = "Chrome_WidgetWin_0" 
         || winClass = "Slimjet_WidgetWin_1") {
@@ -1795,22 +1862,40 @@ workWindow:
     else if (winClass = "ConsoleWindowClass") {
         isSensitiveWindow := true
     }
+    ; 微信窗口
+    else if (InStr(winClass, "Qt") || InStr(winTitle, "微信")) {
+        isSensitiveWindow := true
+        isWeChatWindow := true
+    }
     
     WinSet, AlwaysOnTop, on, ahk_id %curWinId% ; always-on-top
     
     ; 对于敏感窗口，避免修改Style，只修改ExStyle
-    if (!isSensitiveWindow) {
+    ; 对于微信窗口，完全不修改任何样式，只设置置顶
+    if (!isSensitiveWindow && !isWeChatWindow) {
         WinSet, Style, -0x40000, ahk_id %curWinId% ; disable resizing (仅对非敏感窗口)
+        WinSet, ExStyle, +0x80, ahk_id %curWinId% ; remove from task bar
+    } else if (!isWeChatWindow) {
+        ; 对于普通敏感窗口，只修改ExStyle
+        WinSet, ExStyle, +0x80, ahk_id %curWinId% ; remove from task bar
     }
-    
-    WinSet, ExStyle, +0x80, ahk_id %curWinId% ; remove from task bar
     
     ; 设置窗口为最顶层，确保能够显示在任务栏上方
     DllCall("SetWindowPos", "ptr", curWinId, "ptr", -1, "int", 0, "int", 0, "int", 0, "int", 0, "uint", 0x0013)
     
     ; 对于敏感窗口，强制重绘以避免渲染问题
+    ; 对于微信窗口，强制多次重绘
     if (isSensitiveWindow) {
-        WinSet, Redraw,, ahk_id %curWinId%
+        if (isWeChatWindow) {
+            ; 微信窗口需要更彻底的重绘
+            WinSet, Redraw,, ahk_id %curWinId%
+            Sleep 50
+            WinSet, Redraw,, ahk_id %curWinId%
+            Sleep 50
+            WinSet, Redraw,, ahk_id %curWinId%
+        } else {
+            WinSet, Redraw,, ahk_id %curWinId%
+        }
     }
     
     ; 集成子窗口智能管理：检查是否有子窗口需要调整置顶状态
@@ -1828,8 +1913,12 @@ unworkWindow:
         return
     }
     
+    ; 获取窗口标题用于微信检测
+    WinGetTitle, winTitle, ahk_id %curWinId%
+    
     ; 检查是否为敏感窗口（与workWindow函数保持一致）
     isSensitiveWindow := false
+    isWeChatWindow := false
     ; Chrome系列浏览器
     if (winClass = "Chrome_WidgetWin_1" || winClass = "Chrome_WidgetWin_0" 
         || winClass = "Slimjet_WidgetWin_1") {
@@ -1855,37 +1944,58 @@ unworkWindow:
     else if (winClass = "ConsoleWindowClass") {
         isSensitiveWindow := true
     }
+    ; 微信窗口
+    else if (InStr(winClass, "Qt") || InStr(winTitle, "微信")) {
+        isSensitiveWindow := true
+        isWeChatWindow := true
+    }
     
     WinSet, AlwaysOnTop, off, ahk_id %curWinId% ; 取消always-on-top
     
     ; 恢复原始Style（仅对非敏感窗口）
-    savedStyle := originalStyle_%curWinId%
-    if (!isSensitiveWindow && savedStyle != "") {
-        WinSet, Style, %savedStyle%, ahk_id %curWinId%
-        originalStyle_%curWinId% := "" ; 清除保存的值
-    } else if (!isSensitiveWindow) {
-        ; 备用方案：恢复调整大小功能
-        WinSet, Style, +0x40000, ahk_id %curWinId% ; enable resizing
+    ; 对于微信窗口，不修改任何样式
+    if (!isSensitiveWindow && !isWeChatWindow) {
+        savedStyle := originalStyle_%curWinId%
+        if (savedStyle != "") {
+            WinSet, Style, %savedStyle%, ahk_id %curWinId%
+            originalStyle_%curWinId% := "" ; 清除保存的值
+        } else {
+            ; 备用方案：恢复调整大小功能
+            WinSet, Style, +0x40000, ahk_id %curWinId% ; enable resizing
+        }
     }
     
     ; 恢复原始ExStyle，避免对任务栏造成影响
-    savedExStyle := originalExStyle_%curWinId%
-    if (savedExStyle != "") {
-        WinSet, ExStyle, %savedExStyle%, ahk_id %curWinId%
-        originalExStyle_%curWinId% := "" ; 清除保存的值
-    } else {
-        ; 备用方案：只移除我们添加的标志，不影响其他属性
-        WinGet, currentExStyle, ExStyle, ahk_id %curWinId%
-        newExStyle := currentExStyle & ~0x80  ; 移除 WS_EX_TOOLWINDOW 标志
-        WinSet, ExStyle, %newExStyle%, ahk_id %curWinId%
+    ; 对于微信窗口，不修改ExStyle
+    if (!isWeChatWindow) {
+        savedExStyle := originalExStyle_%curWinId%
+        if (savedExStyle != "") {
+            WinSet, ExStyle, %savedExStyle%, ahk_id %curWinId%
+            originalExStyle_%curWinId% := "" ; 清除保存的值
+        } else if (!isWeChatWindow) {
+            ; 备用方案：只移除我们添加的标志，不影响其他属性
+            WinGet, currentExStyle, ExStyle, ahk_id %curWinId%
+            newExStyle := currentExStyle & ~0x80  ; 移除 WS_EX_TOOLWINDOW 标志
+            WinSet, ExStyle, %newExStyle%, ahk_id %curWinId%
+        }
     }
     
     ; 恢复正常窗口层级
     DllCall("SetWindowPos", "ptr", curWinId, "ptr", 0, "int", 0, "int", 0, "int", 0, "int", 0, "uint", 0x0013)
     
     ; 对于敏感窗口，强制重绘以确保正确恢复
+    ; 对于微信窗口，强制多次重绘
     if (isSensitiveWindow) {
-        WinSet, Redraw,, ahk_id %curWinId%
+        if (isWeChatWindow) {
+            ; 微信窗口需要更彻底的重绘
+            WinSet, Redraw,, ahk_id %curWinId%
+            Sleep 50
+            WinSet, Redraw,, ahk_id %curWinId%
+            Sleep 50
+            WinSet, Redraw,, ahk_id %curWinId%
+        } else {
+            WinSet, Redraw,, ahk_id %curWinId%
+        }
     }
     
     ; 清理子窗口管理状态：窗口恢复显示时清理相关状态
@@ -1932,7 +2042,7 @@ createSettingsGUI:
     Gui, Settings:Add, Text, x200 y160 w80 h18 vIndicatorWidthText, %indicatorWidth%px
     
     ; 高级功能分组框
-    Gui, Settings:Add, GroupBox, x10 y190 w480 h120, 高级功能
+    Gui, Settings:Add, GroupBox, x10 y190 w480 h150, 高级功能
     Gui, Settings:Add, Button, x20 y210 w18 h18 vBossKeyHelp gShowBossKeyHelp, ?
     Gui, Settings:Add, Checkbox, x45 y210 w200 h18 vEnableBossKey gUpdateBossKeySetting, 启用老板键功能
     Gui, Settings:Add, Text, x30 y230 w60 h18, 老板键：
@@ -1945,11 +2055,13 @@ createSettingsGUI:
     Gui, Settings:Add, Text, x240 y270 w60 h18 vAutoHideDelayText, %autoHideDelay%分钟
     Gui, Settings:Add, Button, x20 y290 w18 h18 vChildWindowHelp gShowChildWindowHelp, ?
     Gui, Settings:Add, Checkbox, x45 y290 w300 h18 vEnableChildWindowManagement gUpdateChildWindowSetting, 启用子窗口智能管理（防止子窗口被父窗口遮挡）
+    Gui, Settings:Add, Checkbox, x45 y310 w220 h18 vHideFromTaskbarPreview gUpdateHideFromTaskbarPreview, 隐藏任务栏预览（Alt+Tab中不显示）
+    Gui, Settings:Add, Checkbox, x270 y310 w200 h18 vHideFromNotifications gUpdateHideFromNotifications, 隐藏通知区域
     
     ; 按钮区域
-    Gui, Settings:Add, Button, x120 y330 w80 h30 gShowAbout, 关于
-    Gui, Settings:Add, Button, x210 y330 w80 h30 gSaveSettings, 保存
-    Gui, Settings:Add, Button, x300 y330 w80 h30 gCloseSettings, 关闭
+    Gui, Settings:Add, Button, x120 y370 w80 h30 gShowAbout, 关于
+    Gui, Settings:Add, Button, x210 y370 w80 h30 gSaveSettings, 保存
+    Gui, Settings:Add, Button, x300 y370 w80 h30 gCloseSettings, 关闭
     
     ; 设置复选框状态
     GuiControl, Settings:, CtrlRequired, %requireCtrl%
@@ -1959,6 +2071,8 @@ createSettingsGUI:
     GuiControl, Settings:, EnableBossKey, %enableBossKey%
     GuiControl, Settings:, EnableAutoHide, %enableAutoHide%
     GuiControl, Settings:, EnableChildWindowManagement, %enableChildWindowManagement%
+    GuiControl, Settings:, HideFromTaskbarPreview, %hideFromTaskbarPreview%
+    GuiControl, Settings:, HideFromNotifications, %hideFromNotifications%
     
     ; 设置文本框的值
     GuiControl, Settings:, BossKeyHotkey, %bossKeyHotkey%
@@ -1999,7 +2113,7 @@ createSettingsGUI:
     }
     
     ; 显示设置窗口
-    Gui, Settings:Show, w500 h360, WinAutoHide 设置
+    Gui, Settings:Show, w500 h400, WinAutoHide 设置
     
     ; 启动滑块监控定时器，实现实时数值显示
     SetTimer, MonitorSliders, 50
@@ -2430,6 +2544,22 @@ UpdateChildWindowSetting:
         parentWindowStates := {}
         childWindowList := {}
     }
+return
+
+; 更新隐藏任务栏预览设置
+UpdateHideFromTaskbarPreview:
+    GuiControlGet, hideFromTaskbarPreview, Settings:, HideFromTaskbarPreview
+    
+    ; 保存设置到配置文件
+    IniWrite, %hideFromTaskbarPreview%, %configFile%, Settings, HideFromTaskbarPreview
+return
+
+; 更新隐藏通知区域设置
+UpdateHideFromNotifications:
+    GuiControlGet, hideFromNotifications, Settings:, HideFromNotifications
+    
+    ; 保存设置到配置文件
+    IniWrite, %hideFromNotifications%, %configFile%, Settings, HideFromNotifications
 return
 
 ; 更新指示器颜色设置
